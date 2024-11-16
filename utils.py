@@ -6,6 +6,8 @@ from tensorboardX import SummaryWriter
 from IPython import display
 from matplotlib import pyplot as plt
 import torch
+import PIL
+import wandb
 
 '''
     TensorBoard Data will be stored in './runs' path
@@ -64,12 +66,17 @@ class Logger:
         self.writer.add_image(img_name, horizontal_grid, step)
 
         # Save plots
-        self.save_torch_images(horizontal_grid, grid, epoch, n_batch)
+        self.save_torch_images(horizontal_grid, grid, epoch, n_batch, wandb_out=True)
 
-    def save_torch_images(self, horizontal_grid, grid, epoch, n_batch, plot_horizontal=True):
+    def save_torch_images(self, horizontal_grid, grid, epoch, n_batch, plot_horizontal=True, wandb_out=False):
         out_dir = './data/images/{}'.format(self.data_subdir)
         Logger._make_dir(out_dir)
 
+        if wandb_out:
+            img  = wandb.Image(horizontal_grid, caption="Epoch {} Batch {}".format(epoch, n_batch))
+            wandb.log({"Test Set Perturbations":img})
+            return
+        
         # Plot and save horizontal
         fig = plt.figure(figsize=(16, 16))
         plt.imshow(np.moveaxis(horizontal_grid.numpy(), 0, -1))
@@ -78,7 +85,7 @@ class Logger:
             display.display(plt.gcf())
         self._save_images(fig, epoch, n_batch, 'hori')
         plt.close()
-
+        
         # Save squared
         fig = plt.figure()
         plt.imshow(np.moveaxis(grid.numpy(), 0, -1))
