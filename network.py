@@ -107,8 +107,8 @@ class DiscriminatorNet(torch.nn.Module):
         prediction_fake = [p.float() for p in prediction_fake]
         all_labels = all_labels.float()
 
-        # choose prediction fake which causes the worst loss
-        prediction_fake = min(prediction_fake, key=lambda x: CEloss(x, all_labels))
+        # choose prediction fake (produced by the n generators) which causes the worst loss
+        prediction_fake = max(prediction_fake, key=lambda x: CEloss(x, all_labels))
 
         error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
         error.backward()
@@ -194,13 +194,13 @@ class GeneratorNet(torch.nn.Module):
             zero_positions = (all_labels == 0)
             random_choices = torch.multinomial(zero_positions.float(), 1).squeeze(1)  # (batch_size,)
             all_labels_targeted = torch.nn.functional.one_hot(random_choices, num_classes=10).float()
-            # enasure true label is 0
+            # ensure true label is 0
             assert(all_labels_targeted[all_labels == 1].sum() == 0)
 
             all_labels = all_labels_targeted
         if config.GEN_LOSS == "easiest":
-            # choosing the target that is second highest
-            targets = torch.argsort(all_labels, dim=1, descending=True)
+            # choose the target predictions that is second highest, likely the easiest to fool
+            targets = torch.argsort(prediction, dim=1, descending=True)
             all_labels = torch.nn.functional.one_hot(targets[:, 1], num_classes=10).float()
 
         # ensure inputs to CE are float
@@ -211,6 +211,7 @@ class GeneratorNet(torch.nn.Module):
         error = MSEloss(prediction, all_labels) 
         
         if config.REGULARIZATION:
+            # enforce similarty of perturbed and unperturbed images
             error += alpha * torch.sum(torch.abs(real_batch - adv_batch))
         # print("error", error)
 
@@ -246,19 +247,21 @@ class GeneratorNetGroup(torch.nn.Module):
         return [param for gen in self.generators for param in gen.parameters()]
     
     def train_g(self, discriminator, real_batch, adv_batch, all_labels, kl_weight=0.1): #higher kl_weight means more diversity
-        # Train each generator while maximizing kl divergence between all generators
+        # Train each generator while maximizing kl divergence between all generators (for diversity amoung generators)
         noise_g = noise(config.Z_SHAPE, real_batch.size(0))
-        outputs = [gen(noise_g) for gen in self.generators]
+        outputs = [gen(noise_g) for gen in self.generators] # get an example of the random data outputs
 
         if config.N_GENERATOR == 1:
             return [self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)]
         
-        diversity_loss = 0
+        diversity_loss = {}
         pairs = list(combinations(outputs, 2))
+        # calculate the kl divergence between each pair of generators
         for pair in pairs:
             i = pair[0]
             j = pair[1]
-            # prepare for kl divergence
+            # prepare for kl divergence, maintain properties necessary for kl divergence
+            # non-zero postive numbers
             i[i == 0] = 1e-6
             j[j == 0] = 1e-6
             # scale to 0-1
@@ -271,19 +274,21 @@ class GeneratorNetGroup(torch.nn.Module):
             kl_ij = torch.nn.functional.kl_div(i, j, reduction='batchmean')
             kl_ji = torch.nn.functional.kl_div(j, i, reduction='batchmean')
             # print(kl_ij, kl_ji)
-            diversity_loss += kl_ij + kl_ji
-
-        if pairs:
-            diversity_loss /= len(pairs)
+            # total diversity value
+            diversity_loss[(i, j)] =  kl_ij + kl_ji
+            # kl div = how different are the output distributions of this pair of generators
 
         # Train each generator
-        errors = []
+        errors = [] 
         for i, gen in enumerate(self.generators):
             gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels)
-            errors.append(gen_loss - kl_weight * diversity_loss)
-
+            # consider the generator's individual performance WITH how seperate it's performance is relative to other generators
+            # grab the kl divergence for the current generator being reference
+            diversity_loss_curr = torch.sum([value for key,value in diversity_loss.items() if gen in key])
+            errors.append(gen_loss - kl_weight * diversity_loss_curr)
+         
         # choose the generator with the lowest loss
-        return min(errors)
+        return min(errors) 
 
 def ones_target(size):
     '''
