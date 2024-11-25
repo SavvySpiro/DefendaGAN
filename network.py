@@ -284,7 +284,7 @@ class GeneratorNetGroup(torch.nn.Module):
             gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels)
             # consider the generator's individual performance WITH how seperate it's performance is relative to other generators
             # grab the kl divergence for the current generator being reference
-            diversity_loss_curr = torch.sum([value for key,value in diversity_loss.items() if gen in key])
+            diversity_loss_curr = torch.tensor(np.sum([value for key,value in diversity_loss.items() if gen in key]))
             errors.append(gen_loss - kl_weight * diversity_loss_curr)
          
         # choose the generator with the lowest loss
