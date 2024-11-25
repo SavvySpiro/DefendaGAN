@@ -40,7 +40,7 @@ class Logger:
         self.writer.add_scalar(
             '{}/G_error'.format(self.comment), g_error, step)
 
-    def log_images(self, images, num_images, epoch, n_batch, num_batches, format='NCHW', normalize=True):
+    def log_images(self,name, images, num_images, epoch, n_batch, num_batches, format='NCHW', normalize=True):
         '''
         input images are expected in format (NCHW)
         '''
@@ -66,15 +66,15 @@ class Logger:
         self.writer.add_image(img_name, horizontal_grid, step)
 
         # Save plots
-        self.save_torch_images(horizontal_grid, grid, epoch, n_batch, wandb_out=True)
+        self.save_torch_images(name, horizontal_grid, grid, epoch, n_batch, wandb_out=True)
 
-    def save_torch_images(self, horizontal_grid, grid, epoch, n_batch, plot_horizontal=True, wandb_out=False):
+    def save_torch_images(self,name,  horizontal_grid, grid, epoch, n_batch, plot_horizontal=True, wandb_out=False):
         out_dir = './data/images/{}'.format(self.data_subdir)
         Logger._make_dir(out_dir)
 
         if wandb_out:
             img  = wandb.Image(horizontal_grid, caption="Epoch {} Batch {}".format(epoch, n_batch))
-            wandb.log({"Test Set Perturbations":img})
+            wandb.log({name:img})
             return
         
         # Plot and save horizontal
@@ -145,3 +145,14 @@ def images_to_vectors(images):
 
 def vectors_to_images(vectors):
     return vectors.view(vectors.size(0), 1, 28, 28)
+
+def save_model(model, config, name=""):
+    # saves the model with the config -> name. config is a module with the config variables
+    for key in dir(config):
+        if not key.startswith("__"):
+            name += key + "_" + str(getattr(config, key)) + "_"
+    torch.save(model.state_dict(), name + ".pth")\
+
+def load_model(model, path):
+    model.load_state_dict(torch.load(path))
+    return model

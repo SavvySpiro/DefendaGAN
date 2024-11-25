@@ -1,0 +1,26 @@
+
+
+
+# Configurations for the GAN
+TRAINING_ALTERNATE = False # True or False, where it alternates if one of them is winning/losing
+REGULARIZATION = True # True or False, where true means similar looking images, false means diverse looking images
+BATCH_SIZE = 128 # Batch size
+INPUT_TYPE = "noise" # "noise" or "image", where noise is random noise and image is the image as input to generator
+N_GENERATOR = 5 # Number of generators
+Z_SHAPE = (16, 21, 21)
+KL_WEIGHT = 0.1 # KL weight
+KL_WEIGHT_SCHEDULE = 1 # KL weight schedule. use 1 for no schedule #TODO: Implement schedule
+GEN_LOSS = "even" # even - true is 0, others equal
+                # target - true is 0, some other target is 1
+                # easiest - true is 0, some other target is 1, but the easiest one
+
+'''
+List of experimental variables to test/change:
+1. Training in the same loop or alternating using TRAINING_ALTERNATE
+2. Regularization or not using REGULARIZATION (aka similar looking images or diverse looking images)
+3. Input type as noise or image using INPUT_TYPE
+4. Number of generators using N_GENERATOR
+5. KL weight using KL_WEIGHT which chooses how diverse the generators must be (0 is not diverse, 1 is diverse)
+6. KL weight schedule using KL_WEIGHT_SCHEDULE which schedules the KL weight to increase over time (start with similar gens and diverge)
+7. 
+'''
