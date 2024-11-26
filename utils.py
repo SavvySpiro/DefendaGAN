@@ -148,10 +148,12 @@ def vectors_to_images(vectors):
 
 def save_model(model, config, name=""):
     # saves the model with the config -> name. config is a module with the config variables
+
     for key in dir(config):
         if not key.startswith("__"):
             name += key + "_" + str(getattr(config, key)) + "_"
-    torch.save(model.state_dict(), name + ".pth")\
+
+    torch.save(model.state_dict(), name + ".pth")
 
 def load_model(model, path):
     model.load_state_dict(torch.load(path))
