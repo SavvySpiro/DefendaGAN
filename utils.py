@@ -30,9 +30,9 @@ class Logger:
 
         # var_class = torch.autograd.variable.Variable
         if isinstance(d_error, torch.autograd.Variable):
-            d_error = d_error.data.cpu().numpy()
+            d_error = d_error.detach().cpu().numpy()
         if isinstance(g_error, torch.autograd.Variable):
-            g_error = g_error.data.cpu().numpy()
+            g_error = g_error.detach().cpu().numpy()
 
         step = Logger._step(epoch, n_batch, num_batches)
         self.writer.add_scalar(

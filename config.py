@@ -6,11 +6,11 @@ TRAINING_ALTERNATE = False # True or False, where it alternates if one of them i
 REGULARIZATION = True # True or False, where true means similar looking images, false means diverse looking images
 BATCH_SIZE = 128 # Batch size
 INPUT_TYPE = "noise" # "noise" or "image", where noise is random noise and image is the image as input to generator TODO
-N_GENERATOR = 5 # Number of generators
+N_GENERATOR = 1 # Number of generators
 Z_SHAPE = (16, 21, 21) # Don't change!
 KL_WEIGHT = 100 # KL weight, the bigger the number the more diverse the generators are forced to be
 KL_WEIGHT_SCHEDULE = 1 # KL weight schedule. use 1 for no schedule #TODO: Implement schedule
-GEN_LOSS = "even" # even - true is 0, others equal probability
+GEN_LOSS = "easiest" # even - true is 0, others equal probability
                 # target - true is 0, some other target is 1
                 # easiest - true is 0, some other target is 1, but the easiest one
 EPOCHS = 50
