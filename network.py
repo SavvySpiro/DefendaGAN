@@ -121,6 +121,7 @@ class DiscriminatorNet(torch.nn.Module):
             param.requires_grad = True
         
         # Return error and predictions for real and fake inputs
+        error = error.detach()
         return error, torch.cat((prediction_real, prediction_fake), 0)
             
 
@@ -170,12 +171,13 @@ class GeneratorNet(torch.nn.Module):
         # print(x.shape)
         return x.view(-1, 1, 28, 28)
     
-    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss, alpha=0.0001):
+    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=0.0001):
         N = adv_batch.size(0)    
         # Reset gradients
         self.optimizer.zero_grad()    
 
-        diversity_loss = diversity_loss.detach()
+        if diversity_loss != 0:
+            diversity_loss = diversity_loss.detach()
         # freeze discriminator
         for param in discriminator.parameters():
             param.requires_grad = False
@@ -225,6 +227,7 @@ class GeneratorNet(torch.nn.Module):
         for param in discriminator.parameters():
             param.requires_grad = True
 
+        error = error.detach()
         return error + diversity_loss, error
 
     
@@ -254,7 +257,7 @@ class GeneratorNetGroup(torch.nn.Module):
         outputs = [gen(noise_g) for gen in self.generators] # get an example of the random data outputs
 
         if config.N_GENERATOR == 1:
-            return [self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)]
+            return self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)
         
         diversity_loss = {}
         # pairs = list(combinations(outputs, 2)) # wrong
@@ -300,6 +303,9 @@ class GeneratorNetGroup(torch.nn.Module):
 
         # Train each generator
         errors = [] 
+        if config.N_GENERATOR == 1:
+            return self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)
+        
         for i, gen in enumerate(self.generators):
             # consider the generator's individual performance WITH how seperate it's performance is relative to other generators
             # grab the kl divergence for the current generator being referenced
@@ -309,7 +315,7 @@ class GeneratorNetGroup(torch.nn.Module):
             for key, value in diversity_loss.items():
                 if i in key:
                     diversity_loss_curr += value
-                    
+            
             gen_loss, just_gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels, kl_weight*diversity_loss_curr)
 
             errors.append(gen_loss)
@@ -385,7 +391,7 @@ def run():
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
 
                 # 2. Train Generator        
-                g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
