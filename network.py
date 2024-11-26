@@ -170,10 +170,12 @@ class GeneratorNet(torch.nn.Module):
         # print(x.shape)
         return x.view(-1, 1, 28, 28)
     
-    def train_g(self, discriminator, real_batch, adv_batch, all_labels, alpha=0.0001):
+    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss, alpha=0.0001):
         N = adv_batch.size(0)    
         # Reset gradients
         self.optimizer.zero_grad()    
+
+        diversity_loss = diversity_loss.detach()
         # freeze discriminator
         for param in discriminator.parameters():
             param.requires_grad = False
@@ -208,7 +210,7 @@ class GeneratorNet(torch.nn.Module):
         all_labels = all_labels.float()
 
         # Error is 
-        error = MSEloss(prediction, all_labels) 
+        error = MSEloss(prediction, all_labels)
         
         if config.REGULARIZATION:
             # enforce similarty of perturbed and unperturbed images
@@ -223,7 +225,7 @@ class GeneratorNet(torch.nn.Module):
         for param in discriminator.parameters():
             param.requires_grad = True
 
-        return error
+        return error + diversity_loss, error
 
     
 class GeneratorNetGroup(torch.nn.Module):
@@ -246,7 +248,7 @@ class GeneratorNetGroup(torch.nn.Module):
     def parameters(self):
         return [param for gen in self.generators for param in gen.parameters()]
     
-    def train_g(self, discriminator, real_batch, adv_batch, all_labels, kl_weight=0.1): #higher kl_weight means more diversity
+    def train_g(self, discriminator, real_batch, adv_batch, all_labels, kl_weight=config.KL_WEIGHT): #higher kl_weight means more diversity
         # Train each generator while maximizing kl divergence between all generators (for diversity amoung generators)
         noise_g = noise(config.Z_SHAPE, real_batch.size(0))
         outputs = [gen(noise_g) for gen in self.generators] # get an example of the random data outputs
@@ -255,38 +257,65 @@ class GeneratorNetGroup(torch.nn.Module):
             return [self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)]
         
         diversity_loss = {}
-        pairs = list(combinations(outputs, 2))
+        # pairs = list(combinations(outputs, 2)) # wrong
+        pairs = list(combinations(enumerate(outputs), 2))  # Pair outputs with generator indices
+
         # calculate the kl divergence between each pair of generators
-        for pair in pairs:
-            i = pair[0]
-            j = pair[1]
+        # for pair in pairs:
+        for (idx_i, i), (idx_j, j) in pairs:
+            # i = pair[0]
+            # j = pair[1]
             # prepare for kl divergence, maintain properties necessary for kl divergence
             # non-zero postive numbers
-            i[i == 0] = 1e-6
-            j[j == 0] = 1e-6
+            # i[i == 0] = 1e-6
+            # j[j == 0] = 1e-6
+            # i = i.clamp(min=1e-6)  # Ensure no zero values
+            # j = j.clamp(min=1e-6)
             # scale to 0-1
-            i = (i - i.min()) / (i.max() - i.min())
-            j = (j - j.min()) / (j.max() - j.min())
+            # i = (i - i.min()) / (i.max() - i.min())
+            # j = (j - j.min()) / (j.max() - j.min())
+            
+            i = ((i+1) / 2) + 1e-12
+            j = ((j+1) / 2) + 1e-12
             # normalize
             i = i / i.sum()
             j = j / j.sum()
 
-            kl_ij = torch.nn.functional.kl_div(i, j, reduction='batchmean')
-            kl_ji = torch.nn.functional.kl_div(j, i, reduction='batchmean')
-            # print(kl_ij, kl_ji)
+            kl_ij = torch.nn.functional.kl_div(i.log(), j, reduction='sum')
+            kl_ji = torch.nn.functional.kl_div(j.log(), i, reduction='sum')
+
+            # unlogd
+            # kl_ij = torch.exp(kl_ij)
+            # kl_ji = torch.exp(kl_ji)
+            
+            if torch.isnan(kl_ij) or torch.isnan(kl_ji) or torch.isinf(kl_ij) or torch.isinf(kl_ji):
+                print(f"NaN/Inf encountered! kl_ij: {kl_ij}, kl_ji: {kl_ji}, i: {i}, j: {j}")
+
             # total diversity value
-            diversity_loss[(i, j)] =  kl_ij + kl_ji
+            # diversity_loss[(i, j)] =  kl_ij + kl_ji #wrong
+            diversity_loss[(idx_i, idx_j)] = kl_ij + kl_ji
+            # print("KL :", kl_ij, kl_ji)
+
             # kl div = how different are the output distributions of this pair of generators
 
         # Train each generator
         errors = [] 
         for i, gen in enumerate(self.generators):
-            gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels)
             # consider the generator's individual performance WITH how seperate it's performance is relative to other generators
-            # grab the kl divergence for the current generator being reference
-            diversity_loss_curr = torch.tensor(np.sum([value for key,value in diversity_loss.items() if gen in key]))
-            errors.append(gen_loss - kl_weight * diversity_loss_curr)
-         
+            # grab the kl divergence for the current generator being referenced
+            # diversity_loss_curr = torch.tensor(np.sum([value for key,value in diversity_loss.items() if gen in key]))
+
+            diversity_loss_curr = torch.scalar_tensor(0.0)
+            for key, value in diversity_loss.items():
+                if i in key:
+                    diversity_loss_curr += value
+                    
+            gen_loss, just_gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels, kl_weight*diversity_loss_curr)
+
+            errors.append(gen_loss)
+            wandb.log({f"Gen. {i} Diversity Loss": diversity_loss_curr})
+            wandb.log({f"Gen. {i} Generator Loss": just_gen_loss})
+        
         # choose the generator with the lowest loss
         return min(errors) 
 
@@ -329,7 +358,7 @@ def run():
     # Num batches
     num_batches = len(data_loader)
 
-    num_epochs = 50
+    num_epochs = config.EPOCHS
     g_losses = []
     d_losses = []
     g_test_acc = None
@@ -364,7 +393,7 @@ def run():
             wandb.log({"Generator Error": g_error, "Discriminator Error": d_error})
 
             # Display Progress every few batches
-            if (n_batch) % 100 == 0:
+            if (n_batch) % config.BATCH_SIZE == 0:
                 # Sample some noise and generate test images from the current batch
                 test_images_noise = generator(noise(config.Z_SHAPE))
                 test_images = [torch.clamp(g + real_batch, -1, 1) for g in test_images_noise]
@@ -413,8 +442,8 @@ def run():
     wandb.finish()
 
     # Save models
-    utils.save_model(generator, "generator", config)
-    utils.save_model(discriminator, "discriminator", config)
+    utils.save_model(generator, config, name="generator_")
+    utils.save_model(discriminator, config, name="discriminator_")
 
 if __name__ == "__main__":    
 
@@ -422,7 +451,7 @@ if __name__ == "__main__":
     wandb.init(
         project="DefendaGAN",
         config={
-            "epochs":50,
+            "epochs": config.EPOCHS,
             "dataset":"MNIST"
         }
     )
@@ -433,5 +462,6 @@ if __name__ == "__main__":
     # Initialize Loss functions
     CEloss = nn.CrossEntropyLoss()
     MSEloss = nn.MSELoss()
+
     #to run experiments, change configs here before running
     run()
