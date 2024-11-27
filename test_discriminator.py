@@ -8,7 +8,7 @@ from torch import nn, optim
 
 
 # exported models are manually moved to a directory
-state_dict_path = "/home/hanna/Documents/DefendaGAN/drawn-forest-70/discriminator_BATCH_SIZE_128_EPOCHS_50_GEN_LOSS_easiest_INPUT_TYPE_noise_KL_WEIGHT_100_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"
+state_dict_path = "/home/hanna/Documents/DefendaGAN/fancy-sea-80/discriminator_BATCH_SIZE_128_EPOCHS_50_GEN_LOSS_easiest_INPUT_TYPE_noise_KL_WEIGHT_100_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"
 model = utils.load_model(network.DiscriminatorNet(), state_dict_path)
 
 ######################################################
@@ -53,3 +53,5 @@ for n_batch, (real_batch, labels) in enumerate(data_loader):
         print(f"targeted PGD Perturbed Accuracy for class {target_class}: ", targeted_pgd_perturbed_accuracy)
 
     break
+
+######################################################

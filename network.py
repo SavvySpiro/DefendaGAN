@@ -203,40 +203,54 @@ class GeneratorNet(torch.nn.Module):
 
             all_labels = all_labels_targeted
         if config.GEN_LOSS == "easiest":
-            # # choose the target predictions that is second highest, likely the easiest to fool
-            # targets = torch.argsort(prediction, dim=1, descending=True)
-            # all_labels = torch.nn.functional.one_hot(targets[:, 1], num_classes=10).float()
-            # all_labels = all_labels
-
-            # create labels where true label is 0 and remaining are decreasing in probability
+            # choose the target predictions that is second highest, likely the easiest to fool
             targets = torch.argsort(prediction, dim=1, descending=True)
-
+            all_labels = torch.nn.functional.one_hot(targets[:, 1], num_classes=10).float()
+            all_labels = all_labels
+        if config.GEN_LOSS == "easiest_exp":
+            targets = torch.argsort(prediction, dim=1, descending=True)
             # Create one-hot encoded labels
             all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
-            # Initialize all labels to 0
-            all_labels[all_labels == 0] = 0.0
 
-            # Create decreasing values for the remaining labels (excluding the true label)
-            # Generate a tensor with decreasing values
-            num_labels = all_labels.shape[1]
-            decreasing_values = torch.linspace(1.0, 0.0, num_labels - 1).unsqueeze(0)  # Shape (1, num_labels-1)
+            # Set the true label to 0 and others to decreasing values
+            for i in range(all_labels.shape[0]):
+                # Get the index of the true label (assuming target is the first element in the sorted targets)
+                true_label = (all_labels[i] == 1).nonzero(as_tuple=True)[0].item()  # Extract the index of the true label
+                predicted_label = (targets[i] == 0).nonzero(as_tuple=True)[0].item()
 
-            # Create a mask for non-true labels (we exclude the true label from the decreasing values)
-            true_labels = targets[:, 0]  # Get the indices of the true labels
+                # only if the prediction is correct, try to fool the discrimination by assigning 0 probably to the 
+                # actual class and exponentially decreasing probability from the second most likely class onwards
+                # MODIFICATION to assigning uniform probablity as in the "even" option
+                if true_label == predicted_label: 
+                    # print("prediction: ", prediction[i])
+                    # print("target: ", targets[i])
+                    # print("sorted: ", prediction[i][targets[i]])
 
-            # Initialize an array for non-true label indices (all but the first column in 'targets')
-            remaining_labels = targets[:, 1:]  # Shape: (batch_size, num_labels - 1)
+                    # Generate exponentially decreasing values
+                    base = 0.5  # You can choose the base for exponential decay
+                    values = base ** torch.arange(9).float()
+                    # Normalize to make it a probability distribution
+                    values = values / values.sum()
+                    values = torch.cat((torch.tensor([0]), values))
 
-            # Prepare a tensor where the remaining labels will get their corresponding decreasing values
-            decreasing_values_tensor = decreasing_values.expand(all_labels.shape[0], num_labels - 1)  # (batch_size, num_labels - 1)
+                    # # Assign the decreasing values to the remaining labels
+                    # print("BEFORE: ", all_labels[i])
+                    # print(f"prediction[i] :     {prediction[i]}")
+                    # print(f"targets[i] :        {targets[i] }")
+                    # print(f"values[i] :         {values}")
+                    # print(" *****************************************")
+                    for ind in range(10):
+                        # print("NEW probability: ", values[ind])
+                        destination = torch.nonzero(targets[i] == ind, as_tuple=True)[0][0]
+                        # print("index of where it's going ", destination)
+                        all_labels[i][destination] = values[ind]
+                        # print("UPDATE: ", all_labels[i])
+                        # print(" *****************************************")
 
-            # Use scatter to place decreasing values in the appropriate locations of the remaining labels
-            all_labels.scatter_(1, remaining_labels, decreasing_values_tensor)
-
-            # Set the true labels to 0
-            all_labels.scatter_(1, true_labels.unsqueeze(1), torch.zeros_like(true_labels.unsqueeze(1), dtype=torch.float))
-
-            print(all_labels[0])
+                else: # just assign uniform probably to all other classes, assign true class to be zero
+                    all_labels[i][all_labels[i] == 0] = 1.0 / (all_labels[i].shape[0] - 1)
+                    # print(all_labels)
+                    all_labels[i][all_labels[i] == 1] = 0.0
 
         # ensure inputs to CE are float
         prediction = prediction.float()
