@@ -110,7 +110,10 @@ class DiscriminatorNet(torch.nn.Module):
         # choose prediction fake (produced by the n generators) which causes the worst loss
         prediction_fake = max(prediction_fake, key=lambda x: CEloss(x, all_labels))
 
-        error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
+        if config.DISABLE_ATTACK:
+            error = CEloss(prediction_real, all_labels)
+        else:
+            error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
         error.backward()
 
         # 1.3 Update weights with gradients
@@ -419,7 +422,10 @@ def run():
             N = real_batch.size(0)       
 
             noise_data = noise(config.Z_SHAPE, real_batch.size(0))
-            adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
+            if config.DISABLE_ATTACK:
+                adv_batch = [torch.clamp(g*0 + real_batch, -1, 1) for g in generator(noise_data)]
+            else:
+                adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
             # discriminator winning
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
 
