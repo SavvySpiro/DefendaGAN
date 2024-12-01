@@ -12,6 +12,7 @@ import torchattacks
 # sign( ∇x J(x 0; θ))
 
 def apply_fgsm_attack(model, epsilon, original_images, labels, criterion):
+    '''
     model.eval()  # Set the model to evaluation mode
     original_images.requires_grad = True  # Enable gradient computation on the input image
 
@@ -21,9 +22,6 @@ def apply_fgsm_attack(model, epsilon, original_images, labels, criterion):
 
     # Zero all gradients before backward pass (we don't want gradients w.r.t the model's params)
     model.zero_grad()  # Reset gradients for model parameters
-
-    # Backpropagate to compute the gradient w.r.t the input image
-    loss.backward()  # Compute gradients on the input image
 
     data_grad = original_images.grad.detach()  # Get gradients w.r.t the input image
 
@@ -36,7 +34,14 @@ def apply_fgsm_attack(model, epsilon, original_images, labels, criterion):
         perturbed_predictions = model(perturbed_data)
 
     return perturbed_predictions, perturbed_data
+    '''
+    attack = torchattacks.attacks.fgsm.FGSM(model, epsilon)
+    perturbed_data = attack(original_images, labels)
+    
+    with torch.no_grad():
+        perturbed_predictions = model(perturbed_data)
 
+    return perturbed_predictions, perturbed_data
 
 # Set up targeted FGSM attack
 # 1. Calculate gradient of loss w.r.t. input image, – what loss?

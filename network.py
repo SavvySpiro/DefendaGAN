@@ -10,6 +10,7 @@ import utils
 import wandb
 import config
 from itertools import combinations
+import copy
 
 class mnist_classifier(nn.Module):
   def __init__(self, mnist_dim, layer_size, classes):
@@ -114,7 +115,6 @@ class DiscriminatorNet(torch.nn.Module):
         prediction_real = self(real_data)
         prediction_fake = [self(b) for b in adv_batch]
 
-
         # first half is true data, second half is perturbed. 
         all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10)
         # ensure inputs to CE are float
@@ -126,7 +126,7 @@ class DiscriminatorNet(torch.nn.Module):
         prediction_fake = max(prediction_fake, key=lambda x: CEloss(x, all_labels))
 
         if config.DISABLE_ATTACK:
-            error = CEloss(prediction_real, all_labels)
+            error = CEloss(prediction_real, all_labels)*2
         else:
             error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
             
@@ -440,14 +440,17 @@ def run():
 
             noise_data = noise(config.Z_SHAPE, real_batch.size(0))
             if config.DISABLE_ATTACK:
-                adv_batch = [torch.clamp(g*0 + real_batch, -1, 1) for g in generator(noise_data)]
+                adv_batch = [copy.deepcopy(real_batch)]
             else:
                 adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
             # discriminator winning
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
 
                 #1. Train Generator
-                g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                if not config.DISABLE_ATTACK:
+                    g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                else:
+                    g_error = 0
 
                 #2.  Train Discriminator
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
@@ -459,7 +462,10 @@ def run():
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
 
                 # 2. Train Generator        
-                g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                if not config.DISABLE_ATTACK:
+                    g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                else:
+                    g_error = 0
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
@@ -511,8 +517,11 @@ def run():
 
 
         d_losses.append(d_error.detach().numpy())
-        g_losses.append(g_error.detach().numpy())
-
+        
+        if config.DISABLE_ATTACK:
+            g_losses.append(g_error)
+        else:
+            g_losses.append(g_error.detach().numpy())
     
     fig = plt.figure()
     plt.plot(list(range(1, num_epochs+1)), d_losses, label="Discriminator")

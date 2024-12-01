@@ -15,7 +15,7 @@ GEN_LOSS = "target" # even - true is 0, others equal probability
                 # easiest - true is 0, some other target is 1, but the easiest one
                 # easiest_exp
 EPOCHS = 50
-DISABLE_ATTACK = False
+DISABLE_ATTACK = True
 '''
 List of experimental variables to test/change:
 1. Training in the same loop or alternating using TRAINING_ALTERNATE
