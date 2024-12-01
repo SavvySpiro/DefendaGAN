@@ -7,100 +7,51 @@ from matplotlib import pyplot as plt
 import numpy as np
 import wandb
 
-class DiscriminatorNet(torch.nn.Module):
-    """
-    A three hidden-layer discriminative neural network
-    """
+class DiscriminatorNet(nn.Module):
     def __init__(self):
         super(DiscriminatorNet, self).__init__()
-        n_features = 784
-        n_out = 10
-        
-        '''
-        {conv(32, 3, 3) + relu} * 2
-        maxpool(2,2)
-        {conv(64, 3, 3) + relu} * 2
-        maxpool(2,2)
-        FC(200) + relu
-        FC(200) + relu
-        fc(10) + softmax
-        '''
-
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(3,3), stride=1),
+        self.model = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),  # Conv1
             nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3,3), stride=1),
-            nn.ReLU()
-        )
-
-        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3,3), stride=1),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1), # Conv2
             nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3,3), stride=1),
-            nn.ReLU()
-        )
-
-        self.fc = nn.Sequential(
-            nn.Linear(64 * 6 * 6, 200),
+            nn.MaxPool2d(kernel_size=2, stride=2),                 # Maxpool 1
+            nn.Flatten(),
+            nn.Linear(64 * 14 * 14, 200),                         # FC1
             nn.ReLU(),
-            nn.Linear(200, 200),
-            nn.ReLU(),
+            nn.Linear(200, 10),                                   # FC2
+            nn.Softmax(dim=1)
         )
-
-        self.out = nn.Sequential(
-            nn.Linear(200, 10),
-            nn.Softmax()
-        )
-
+    
     def forward(self, x):
-        x = x.view(x.size(0), 1, 28, 28)
-        x = self.conv1(x)
-        x = self.maxpool(x)
-        x = self.conv2(x)
-        x = self.maxpool(x)
-        print(x.shape)
-        x = x.view(x.size(0), -1)
-        x = self.fc(self.fc(x))
+        return self.model(x)
+
             
 
-class GeneratorNet(torch.nn.Module):
-    """
-    A three hidden-layer generative neural network
-    """
+class GeneratorNet(nn.Module):
     def __init__(self):
         super(GeneratorNet, self).__init__()
-        n_features = 784
-        n_out = 784
-        
-        '''
-        deconv1 (16,3,3) + RELU
-        deconv2 (8,5,5) + RELU
-        deconv3 (1,2,2) + tanh
-        '''
-
-        self.dconv1 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=1, out_channels=16, kernel_size=(3,3), stride=1),
-            nn.ReLU() 
-        )
-
-        self.dconv2 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=(5,5), stride=1),
+        # Encoder: Convolutional layers
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, stride=2, padding=1),  # -> B x 16 x 14 x 14
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1), # -> B x 32 x 7 x 7
             nn.ReLU()
         )
-
-        self.dconv3 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=8, out_channels=1, kernel_size=(2,2), stride=1),
-            nn.Tanh()
+        # Decoder: Transposed Convolutional layers
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1), # -> B x 16 x 14 x 14
+            nn.ReLU(),
+            nn.ConvTranspose2d(16, 1, kernel_size=3, stride=2, padding=1, output_padding=1),  # -> B x 1 x 28 x 28
+            nn.Sigmoid()  # To constrain output values between 0 and 1
         )
 
     def forward(self, x):
-        x = x.view(x.size(0), 1, 28, 28)
-        x = self.dconv1(x)
-        x = self.dconv2(x)
-        x = self.dconv3(x)
-        return x.view(x.size(0), 784)
+        # Forward pass
+        x = self.encoder(x)
+        print(x.shape)
+        x = self.decoder(x)
+        return x
 
 
 def train_discriminator(d_optimizer, real_data, adv_data, all_labels):
@@ -198,11 +149,18 @@ if __name__ == "__main__":
     discriminator = DiscriminatorNet()
     generator = GeneratorNet()
 
+    # test g and d
+    test_img = torch.rand(1,1,28,28)
+    test_img2 = torch.rand(1,16, 3, 3)
+    print(discriminator(test_img).shape)
+    print(generator(test_img).shape)
+
+
     initial_weight_decay = 0.001
     final_weight_decay = 0.00001
 
-    d_optimizer = optim.Adam(discriminator.parameters(), lr=0.0002)
-    g_optimizer = optim.Adam(generator.parameters(), lr=0.0002) #, weight_decay=initial_weight_decay) # l2 regularization
+    d_optimizer = optim.Adam(discriminator.parameters(), lr=0.0001)
+    g_optimizer = optim.Adam(generator.parameters(), lr=0.0001) #, weight_decay=initial_weight_decay) # l2 regularization
     CEloss = nn.CrossEntropyLoss()
     MSEloss = nn.MSELoss()
 
@@ -211,7 +169,7 @@ if __name__ == "__main__":
     # Create logger instance
     
     data = mnist_data()# Create loader with data, so that we can iterate over it
-    data_loader = torch.utils.data.DataLoader(data, batch_size=100, shuffle=True)
+    data_loader = torch.utils.data.DataLoader(data, batch_size=128, shuffle=True)
     # Num batches
     num_batches = len(data_loader)
 
@@ -338,15 +296,3 @@ if __name__ == "__main__":
     plt.legend()
     plt.show()
     wandb.finish()
-
-
-'''
-Notes for Alenna's Sanity:
-1. see why the test set is all 0s, what
-2. display change in perturbations to the same image/set of 0-9 over epochs
-3. display accuracy on unperturbed and perturbed sets over epochs
-4. display examples of correct and incorrect classifications over epochs
-5. add maturation schedule to regularization of generator
-6. Plot performance against fgsm over time 
-7. 
-'''
