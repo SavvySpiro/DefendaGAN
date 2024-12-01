@@ -11,6 +11,21 @@ import wandb
 import config
 from itertools import combinations
 
+class mnist_classifier(nn.Module):
+  def __init__(self, mnist_dim, layer_size, classes):
+    super(mnist_classifier, self).__init__()
+    self.flatten = nn.Flatten()
+    self.input_layer = nn.Linear(mnist_dim*mnist_dim, mnist_dim)
+    self.activation_layer = nn.ReLU()
+    self.output_layer = nn.Linear(mnist_dim, classes)
+    
+  def forward(self, input):
+    input = self.flatten(input)
+    input = self.input_layer(input)
+    input = self.activation_layer(input)
+    input = self.output_layer(input)
+    return input
+  
 class DiscriminatorNet(torch.nn.Module):
     """
     A three hidden-layer discriminative neural network
@@ -114,6 +129,7 @@ class DiscriminatorNet(torch.nn.Module):
             error = CEloss(prediction_real, all_labels)
         else:
             error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
+            
         error.backward()
 
         # 1.3 Update weights with gradients
@@ -371,6 +387,7 @@ class GeneratorNetGroup(torch.nn.Module):
             wandb.log({f"Gen. {i} Generator Loss": just_gen_loss})
         
         # choose the generator with the lowest loss
+        
         return min(errors) 
 
 def ones_target(size):
@@ -430,7 +447,7 @@ def run():
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
 
                 #1. Train Generator
-                g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
 
                 #2.  Train Discriminator
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)

@@ -2,6 +2,7 @@ import torch
 from torch.autograd.variable import Variable
 from torchvision import transforms, datasets
 from matplotlib import pyplot as plt
+import torchattacks
 
 # Set up the FGSM attack
 # 1. Get predicted class of nominal image, x
@@ -148,6 +149,20 @@ def apply_perturb_images_rand_noise(model, noise_mag, original_images):
     noise = noise_mag * torch.randn_like(original_images) # generate random noise
     rand_perturbed_images = original_images + noise # apply random noise
     perturbed_data = torch.clamp(rand_perturbed_images, 0, 1) # clamp values
+    with torch.no_grad():
+        perturbed_predictions = model(perturbed_data)
+
+    return perturbed_predictions, perturbed_data
+
+
+def apply_cw_attack(model, original_images, labels, c, kappa, steps, lr):
+    model.eval()  # Set the model to evaluation mode
+    original_images.requires_grad = True  # Enable gradient computation on the input image
+
+    atk = torchattacks.CW(model, c, kappa, steps, lr)
+    # Generate adversarial examples 
+    perturbed_data = atk(original_images, labels)
+
     with torch.no_grad():
         perturbed_predictions = model(perturbed_data)
 
