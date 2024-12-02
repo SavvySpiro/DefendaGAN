@@ -490,6 +490,8 @@ def run():
                     g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
                 else:
                     g_error = 0
+            else:
+                print("Error: Training not defined")
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
@@ -548,12 +550,12 @@ def run():
                 wandb.log(wandb_log)
 
                 # Record fgsm error compared to perturbed data
-                fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.1, test_batch, labels, CEloss)
+                fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.3, test_batch, labels, CEloss)
                 fgsm_perturbed_accuracy = torch.sum(torch.argmax(fgsm_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"FGSM Perturbed Accuracy": fgsm_perturbed_accuracy})
 
                 # Record pgd error compared to perturbed data
-                epsilon = 0.1
+                epsilon = 0.3
                 alpha = 0.005
                 n_iters = 100
                 pgd_perturbed_pred, _ = comparison.apply_pgd_attack(discriminator, epsilon, alpha, n_iters, test_batch, labels, CEloss)
