@@ -4,6 +4,7 @@ from torchvision import transforms, datasets
 from matplotlib import pyplot as plt
 import torchattacks
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Set up the FGSM attack
 # 1. Get predicted class of nominal image, x
 # 2. Calculate gradient of loss w.r.t. input image, – what loss to use?
@@ -12,34 +13,45 @@ import torchattacks
 # sign( ∇x J(x 0; θ))
 
 def apply_fgsm_attack(model, epsilon, original_images, labels, criterion):
-    '''
+                                                                                                                             
     model.eval()  # Set the model to evaluation mode
     original_images.requires_grad = True  # Enable gradient computation on the input image
 
     # Get the model's predictions for the original image
+    # 
     output = model(original_images)  # Forward pass through the model
     loss = criterion(output, labels)  # Compute the loss
 
     # Zero all gradients before backward pass (we don't want gradients w.r.t the model's params)
     model.zero_grad()  # Reset gradients for model parameters
+    loss.backward()  # Backward pass to compute the gradient of the loss w.r.t the input image
 
     data_grad = original_images.grad.detach()  # Get gradients w.r.t the input image
 
     # Apply the FGSM attack (perturb the input image)
     sign_data_grad = data_grad.sign()  # Get the sign of the gradient
-    perturbed_image = original_images + epsilon * sign_data_grad  # Perturb the image
-    perturbed_data = torch.clamp(perturbed_image, 0, 1)  # Clamp to valid pixel range
+    perturbed_data = original_images + epsilon * sign_data_grad  # Perturb the image
+
+    # plt.imshow(original_images[0].permute(1, 2, 0).cpu().detach().numpy())
+    # plt.show()
+    # plt.imshow(perturbed_data[0].permute(1, 2, 0).cpu().detach().numpy())
+    # plt.show()
 
     with torch.no_grad():
         perturbed_predictions = model(perturbed_data)
 
     return perturbed_predictions, perturbed_data
-    '''
-    attack = torchattacks.attacks.fgsm.FGSM(model, epsilon)
-    perturbed_data = attack(original_images, labels)
     
-    with torch.no_grad():
-        perturbed_predictions = model(perturbed_data)
+    # # Set the model to evaluation mode
+    # model.eval()
+    # # Enable gradient computation on the input image
+    # original_images.requires_grad = True
+
+    # attack = torchattacks.attacks.fgsm.FGSM(model, epsilon)
+    # perturbed_data = attack(original_images, labels)
+    
+    # with torch.no_grad():
+    #     perturbed_predictions = model(perturbed_data)
 
     return perturbed_predictions, perturbed_data
 
@@ -66,7 +78,7 @@ def apply_targeted_fgsm_attack(model, epsilon, original_images, labels, criterio
     perturbed_image = original_images - epsilon * sign_data_grad # use the gradient as direction to perturb the image
     # ^ targeted_fgsm_attack computes the perturbed image by applying the FGSM formula to minimize the
     # loss for a specific target class: perturbed_image = image - epsilon * sign(gradient).
-    perturbed_image = torch.clamp(perturbed_image, 0, 1) # clamp the pixels to make sure the image remains valid
+    perturbed_image = perturbed_image # clamp the pixels to make sure the image remains valid
     
     with torch.no_grad():
         perturbed_predictions = model(perturbed_image)
@@ -97,7 +109,6 @@ def apply_pgd_attack(model, epsilon, alpha, num_iter, original_images, labels, c
         
         # clip the perturbed image to be within the epsilon-ball and valid pixel range
         perturbed_image = torch.clamp(perturbed_image, original_images - epsilon, original_images + epsilon)
-        perturbed_image = torch.clamp(perturbed_image, 0, 1)  # Assuming pixel values are in [0, 1]
         
         # detach the perturbed image and re-enable gradient computation
         perturbed_image = perturbed_image.detach()

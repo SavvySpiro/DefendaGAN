@@ -6,13 +6,13 @@ import numpy as np
 
 from utils import Logger
 
-def mnist_data():
+def mnist_data(train=True):
     compose = transforms.Compose(
         [transforms.ToTensor(),
          transforms.Normalize((.5), (.5))
         ])
     out_dir = './dataset'
-    return datasets.MNIST(root=out_dir, train=True, transform=compose, download=True)# Load data
+    return datasets.MNIST(root=out_dir, train=train, transform=compose, download=True)# Load data
 
 def noise(size):
     '''

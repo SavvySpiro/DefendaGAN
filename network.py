@@ -445,10 +445,12 @@ def run():
 
 
     # Load data
-    data = mnist_data()# Create loader with data, so that we can iterate over it
-    data_loader = torch.utils.data.DataLoader(data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
+    train_data = mnist_data(train=True)# Create loader with data, so that we can iterate over it
+    train_data_loader = torch.utils.data.DataLoader(train_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
+    test_data = mnist_data(train=False)
+    test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
     # Num batches
-    num_batches = len(data_loader)
+    num_batches = len(train_data_loader)
 
     num_epochs = config.EPOCHS
     g_losses = []
@@ -456,14 +458,15 @@ def run():
     g_test_acc = None
     d_test_acc = None
     for epoch in range(num_epochs):
-        for n_batch, (real_batch, labels) in enumerate(data_loader):
+        for n_batch, (real_batch, labels) in enumerate(train_data_loader):
             N = real_batch.size(0)       
 
             noise_data = noise(config.Z_SHAPE, real_batch.size(0))
+
             if config.DISABLE_ATTACK:
                 adv_batch = [copy.deepcopy(real_batch)]
             else:
-                adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
+                adv_batch = [g + real_batch for g in generator(noise_data)]
             # discriminator winning
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
 
@@ -495,9 +498,23 @@ def run():
 
             # Display Progress every few batches
             if (n_batch) % config.BATCH_SIZE == 0:
+                # choose next test batch from test data loader. if end of data, reset. we can do performance on entire test set later.
+                try:
+                    test_batch, labels = next(iter(test_data_loader)) 
+                except StopIteration:
+                    test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
+                    test_batch, labels = next(iter(test_data_loader))
+
+                test_batch.to(config.DEVICE)
+                test_batch.requires_grad = True 
+
                 # Sample some noise and generate test images from the current batch
-                test_images_noise = generator(noise(config.Z_SHAPE))
-                test_images = [torch.clamp(g + real_batch, -1, 1) for g in test_images_noise]
+                if not config.DISABLE_ATTACK:
+                    test_images_noise = generator(noise(config.Z_SHAPE))
+                    test_images = [g + test_batch for g in test_images_noise]
+                else:
+                    test_images_noise = generator(noise(config.Z_SHAPE))
+                    test_images = test_batch
                 
                 # Log Noise in wandb (default)
                 for i, img in enumerate(test_images_noise):
@@ -511,7 +528,7 @@ def run():
 
                 # Log discriminator error on perturbed and unperturbed data       
                 discriminator.eval()    
-                unperturbed = discriminator(Variable(images_to_vectors(real_batch)))
+                unperturbed = discriminator(Variable(images_to_vectors(test_batch)))
                 perturbed = [discriminator(Variable(images_to_vectors(p))) for p in test_images]
 
                 # calculate accuracy
@@ -523,7 +540,7 @@ def run():
 
                 wandb_log = {"Unperturbed Accuracy": unperturbed_accuracy}
                 if config.N_GENERATOR == 1:
-                    wandb_log["Perturbed Accuracy"] = perturbed_accuracy
+                    wandb_log["Perturbed Accuracy"] = perturbed_accuracy[0]
                 else:
                     wandb_log["Min Perturbed Accuracy"] = min(perturbed_accuracy)
                     wandb_log["Max Perturbed Accuracy"] = max(perturbed_accuracy)
@@ -531,7 +548,7 @@ def run():
                 wandb.log(wandb_log)
 
                 # Record fgsm error compared to perturbed data
-                fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.1, real_batch, labels, CEloss)
+                fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.1, test_batch, labels, CEloss)
                 fgsm_perturbed_accuracy = torch.sum(torch.argmax(fgsm_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"FGSM Perturbed Accuracy": fgsm_perturbed_accuracy})
 
@@ -539,7 +556,7 @@ def run():
                 epsilon = 0.1
                 alpha = 0.005
                 n_iters = 100
-                pgd_perturbed_pred, _ = comparison.apply_pgd_attack(discriminator, epsilon, alpha, n_iters, real_batch, labels, CEloss)
+                pgd_perturbed_pred, _ = comparison.apply_pgd_attack(discriminator, epsilon, alpha, n_iters, test_batch, labels, CEloss)
                 pgd_perturbed_accuracy = torch.sum(torch.argmax(pgd_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"PGD Perturbed Accuracy": pgd_perturbed_accuracy})
 

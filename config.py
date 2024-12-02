@@ -1,12 +1,12 @@
 
-
+import torch
 
 # Configurations for the GAN
-TRAINING_ALTERNATE = True # True or False, where it alternates if one of them is winning/losing
+TRAINING_ALTERNATE = False # True or False, where it alternates if one of them is winning/losing
 REGULARIZATION = True # True or False, where true means similar looking images, false means diverse looking images
 BATCH_SIZE = 128 # Batch size
 INPUT_TYPE = "noise" # "noise" or "image", where noise is random noise and image is the image as input to generator TODO
-N_GENERATOR = 3 # Number of generators
+N_GENERATOR = 1 # Number of generators
 GENERATOR_LR = 0.0002 # Learning rate for the generators
 Z_SHAPE = (16, 21, 21) # Don't change!
 KL_WEIGHT = 0.01 # KL weight, the bigger the number the more diverse the generators are forced to be
@@ -17,6 +17,8 @@ GEN_LOSS = "target" # even - true is 0, others equal probability
                 # easiest_exp
 EPOCHS = 50
 DISABLE_ATTACK = True
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 '''
 List of experimental variables to test/change:
 1. Training in the same loop or alternating using TRAINING_ALTERNATE
