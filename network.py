@@ -10,7 +10,23 @@ import utils
 import wandb
 import config
 from itertools import combinations
+import copy
 
+class mnist_classifier(nn.Module):
+  def __init__(self, mnist_dim, layer_size, classes):
+    super(mnist_classifier, self).__init__()
+    self.flatten = nn.Flatten()
+    self.input_layer = nn.Linear(mnist_dim*mnist_dim, mnist_dim)
+    self.activation_layer = nn.ReLU()
+    self.output_layer = nn.Linear(mnist_dim, classes)
+    
+  def forward(self, input):
+    input = self.flatten(input)
+    input = self.input_layer(input)
+    input = self.activation_layer(input)
+    input = self.output_layer(input)
+    return input
+  
 class DiscriminatorNet(torch.nn.Module):
     """
     A three hidden-layer discriminative neural network
@@ -99,7 +115,6 @@ class DiscriminatorNet(torch.nn.Module):
         prediction_real = self(real_data)
         prediction_fake = [self(b) for b in adv_batch]
 
-
         # first half is true data, second half is perturbed. 
         all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10)
         # ensure inputs to CE are float
@@ -110,7 +125,11 @@ class DiscriminatorNet(torch.nn.Module):
         # choose prediction fake (produced by the n generators) which causes the worst loss
         prediction_fake = max(prediction_fake, key=lambda x: CEloss(x, all_labels))
 
-        error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
+        if config.DISABLE_ATTACK:
+            error = CEloss(prediction_real, all_labels)*2
+        else:
+            error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
+            
         error.backward()
 
         # 1.3 Update weights with gradients
@@ -206,6 +225,51 @@ class GeneratorNet(torch.nn.Module):
             # choose the target predictions that is second highest, likely the easiest to fool
             targets = torch.argsort(prediction, dim=1, descending=True)
             all_labels = torch.nn.functional.one_hot(targets[:, 1], num_classes=10).float()
+            all_labels = all_labels
+        if config.GEN_LOSS == "easiest_exp":
+            targets = torch.argsort(prediction, dim=1, descending=True)
+            # Create one-hot encoded labels
+            all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
+
+            # Set the true label to 0 and others to decreasing values
+            for i in range(all_labels.shape[0]):
+                # Get the index of the true label (assuming target is the first element in the sorted targets)
+                true_label = (all_labels[i] == 1).nonzero(as_tuple=True)[0].item()  # Extract the index of the true label
+                predicted_label = (targets[i] == 0).nonzero(as_tuple=True)[0].item()
+
+                # only if the prediction is correct, try to fool the discrimination by assigning 0 probably to the 
+                # actual class and exponentially decreasing probability from the second most likely class onwards
+                # MODIFICATION to assigning uniform probablity as in the "even" option
+                if true_label == predicted_label: 
+                    # print("prediction: ", prediction[i])
+                    # print("target: ", targets[i])
+                    # print("sorted: ", prediction[i][targets[i]])
+
+                    # Generate exponentially decreasing values
+                    base = 0.5  # You can choose the base for exponential decay
+                    values = base ** torch.arange(9).float()
+                    # Normalize to make it a probability distribution
+                    values = values / values.sum()
+                    values = torch.cat((torch.tensor([0]), values))
+
+                    # # Assign the decreasing values to the remaining labels
+                    # print("BEFORE: ", all_labels[i])
+                    # print(f"prediction[i] :     {prediction[i]}")
+                    # print(f"targets[i] :        {targets[i] }")
+                    # print(f"values[i] :         {values}")
+                    # print(" *****************************************")
+                    for ind in range(10):
+                        # print("NEW probability: ", values[ind])
+                        destination = torch.nonzero(targets[i] == ind, as_tuple=True)[0][0]
+                        # print("index of where it's going ", destination)
+                        all_labels[i][destination] = values[ind]
+                        # print("UPDATE: ", all_labels[i])
+                        # print(" *****************************************")
+
+                else: # just assign uniform probably to all other classes, assign true class to be zero
+                    all_labels[i][all_labels[i] == 0] = 1.0 / (all_labels[i].shape[0] - 1)
+                    # print(all_labels)
+                    all_labels[i][all_labels[i] == 1] = 0.0
 
         # ensure inputs to CE are float
         prediction = prediction.float()
@@ -344,6 +408,7 @@ class GeneratorNetGroup(torch.nn.Module):
         # choose random generator to return
         # return max(errors).detach()
         random_gen = torch.randint(0, len(self.generators), (1,))
+        
         return errors[random_gen].detach()
 
 def ones_target(size):
@@ -395,12 +460,18 @@ def run():
             N = real_batch.size(0)       
 
             noise_data = noise(config.Z_SHAPE, real_batch.size(0))
-            adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
+            if config.DISABLE_ATTACK:
+                adv_batch = [copy.deepcopy(real_batch)]
+            else:
+                adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
             # discriminator winning
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
 
                 #1. Train Generator
-                g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                if not config.DISABLE_ATTACK:
+                    g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                else:
+                    g_error = 0
 
                 #2.  Train Discriminator
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
@@ -412,7 +483,10 @@ def run():
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
 
                 # 2. Train Generator        
-                g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                if not config.DISABLE_ATTACK:
+                    g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
+                else:
+                    g_error = 0
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
@@ -461,10 +535,21 @@ def run():
                 fgsm_perturbed_accuracy = torch.sum(torch.argmax(fgsm_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"FGSM Perturbed Accuracy": fgsm_perturbed_accuracy})
 
+                # Record pgd error compared to perturbed data
+                epsilon = 0.1
+                alpha = 0.005
+                n_iters = 100
+                pgd_perturbed_pred, _ = comparison.apply_pgd_attack(discriminator, epsilon, alpha, n_iters, real_batch, labels, CEloss)
+                pgd_perturbed_accuracy = torch.sum(torch.argmax(pgd_perturbed_pred, dim=1) == labels).float() / len(labels)
+                wandb.log({"PGD Perturbed Accuracy": pgd_perturbed_accuracy})
+
 
         d_losses.append(d_error.detach().numpy())
-        g_losses.append(g_error.detach().numpy())
-
+        
+        if config.DISABLE_ATTACK:
+            g_losses.append(g_error)
+        else:
+            g_losses.append(g_error.detach().numpy())
     
     fig = plt.figure()
     plt.plot(list(range(1, num_epochs+1)), d_losses, label="Discriminator")
