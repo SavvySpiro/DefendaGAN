@@ -62,8 +62,8 @@ if __name__ == "__main__":
     #               "models/alt and gen loss/no_alt/happy-dawn-68 (no_alt, even)/discriminator_BATCH_SIZE_128_EPOCHS_50_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_100_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth", 
     #               "models/alt and gen loss/no_alt/pious-sound-161 (no_alt, target)/discriminator_BATCH_SIZE_128_EPOCHS_50_GEN_LOSS_target_INPUT_TYPE_noise_KL_WEIGHT_100_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"]
 
-    all_models = ["/home/hanna/Documents/DefendaGAN/discriminator_BATCH_SIZE_128_DEVICE_cuda_DISABLE_ATTACK_False_EPOCHS_10_GENERATOR_LR_0.0002_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_0.01_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth",
-                  "discriminator_BATCH_SIZE_128_DEVICE_cuda_DISABLE_ATTACK_True_EPOCHS_10_GENERATOR_LR_0.0002_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_0.01_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"]
+    all_models = ["/home/hanna/Documents/DefendaGAN/to test/discriminator_BATCH_SIZE_128_DEVICE_cuda_DISABLE_ATTACK_False_EPOCHS_50_GENERATOR_LR_0.0002_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_0.01_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth", 
+                  "to test/discriminator_BATCH_SIZE_128_DEVICE_cuda_DISABLE_ATTACK_True_EPOCHS_50_GENERATOR_LR_0.0002_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_0.01_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"]
     # state_dict_path = "/home/hanna/Documents/DefendaGAN/models/alt and gen loss/alt/rural-capybara-158 (alt, even)/discriminator_BATCH_SIZE_128_EPOCHS_50_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_100_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_True_Z_SHAPE_(16, 21, 21)_.pth"
     # model = utils.load_model(network.DiscriminatorNet(), state_dict_path)
 

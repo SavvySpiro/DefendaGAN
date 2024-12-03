@@ -187,7 +187,7 @@ class GeneratorNet(torch.nn.Module):
         # print(x.shape)
         return x.view(-1, 1, 28, 28)
     
-    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=0.001):
+    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=0.0001):
         N = adv_batch.size(0)    
         # Reset gradients
         self.optimizer.zero_grad()    
@@ -208,7 +208,7 @@ class GeneratorNet(torch.nn.Module):
             all_labels[all_labels == 0] = 1.0 / (all_labels.shape[1] - 1)
             # print(all_labels)
             all_labels[all_labels == 1] = 0
-        if config.GEN_LOSS == "target":
+        if config.GEN_LOSS == "target_random":
             # choose random target that isnt the true label
             all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
             zero_positions = (all_labels == 0)
@@ -218,6 +218,16 @@ class GeneratorNet(torch.nn.Module):
             assert(all_labels_targeted[all_labels == 1].sum() == 0)
 
             all_labels = all_labels_targeted
+        if config.GEN_LOSS == "target_3":
+            target_class = 3
+            # choose target class that isnt the true label
+            all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
+            zero_positions = (all_labels == 0)
+            random_choices = torch.multinomial(zero_positions.float(), 1).squeeze(1)  # (batch_size,)
+            all_labels_targeted = torch.nn.functional.one_hot(torch.full_like(random_choices, 3), num_classes=10).float()
+  
+            all_labels = all_labels_targeted
+            
         if config.GEN_LOSS == "easiest":
             # choose the target predictions that is second highest, likely the easiest to fool
             targets = torch.argsort(prediction, dim=1, descending=True)
@@ -316,6 +326,7 @@ class GeneratorNetGroup(torch.nn.Module):
         # Train each generator while maximizing kl divergence between all generators (for diversity amoung generators)
         noise_g = noise(config.Z_SHAPE, real_batch.size(0))
         outputs = [gen(noise_g) for gen in self.generators] # get an example of the random data outputs
+        # check if outputs are the exact same
 
         if config.N_GENERATOR == 1:
             return self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)[0]
@@ -452,7 +463,8 @@ def run():
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
 
             # Generator winning or no data yet
-            elif d_test_acc == None or g_test_acc <= d_test_acc:
+            # elif d_test_acc == None or g_test_acc <= d_test_acc:
+            else:
 
                 # 1. Train Discriminator
                 d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
@@ -462,8 +474,8 @@ def run():
                     g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
                 else:
                     g_error = 0
-            else:
-                print("Error: Training not defined")
+            # else:
+            #     print("Error: Training not defined")
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
@@ -483,8 +495,12 @@ def run():
                 test_batch.requires_grad = True 
 
                 # Sample some noise and generate test images from the current batch
-                test_images_noise = generator(noise(config.Z_SHAPE))
-                test_images = [g + real_batch for g in test_images_noise]
+                if not config.DISABLE_ATTACK:
+                    test_images_noise = generator(noise(config.Z_SHAPE))
+                    test_images = [g + test_batch for g in test_images_noise]
+                else:
+                    test_images_noise = generator(noise(config.Z_SHAPE))
+                    test_images = test_batch
                 
                 # Log Noise in wandb (default)
                 for i, img in enumerate(test_images_noise):
