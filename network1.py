@@ -187,7 +187,7 @@ class GeneratorNet(torch.nn.Module):
         # print(x.shape)
         return x.view(-1, 1, 28, 28)
     
-    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=0.0001):
+    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=1e-7):
         N = adv_batch.size(0)    
         # Reset gradients
         self.optimizer.zero_grad()    
@@ -227,7 +227,15 @@ class GeneratorNet(torch.nn.Module):
             all_labels_targeted = torch.nn.functional.one_hot(torch.full_like(random_choices, 3), num_classes=10).float()
   
             all_labels = all_labels_targeted
-            
+        if config.GEN_LOSS == "target_7":
+            target_class = 7
+            # choose target class that isnt the true label
+            all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
+            zero_positions = (all_labels == 0)
+            random_choices = torch.multinomial(zero_positions.float(), 1).squeeze(1)  # (batch_size,)
+            all_labels_targeted = torch.nn.functional.one_hot(torch.full_like(random_choices, 3), num_classes=10).float()
+  
+            all_labels = all_labels_targeted
         if config.GEN_LOSS == "easiest":
             # choose the target predictions that is second highest, likely the easiest to fool
             targets = torch.argsort(prediction, dim=1, descending=True)
