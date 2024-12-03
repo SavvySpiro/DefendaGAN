@@ -150,7 +150,7 @@ def save_model(model, config, name=""):
     # saves the model with the config -> name. config is a module with the config variables
 
     for key in dir(config):
-        if not key.startswith("__"):
+        if not key.startswith("__") and not (key=="torch"):
             name += key + "_" + str(getattr(config, key)) + "_"
 
     torch.save(model.state_dict(), name + ".pth")

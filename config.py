@@ -11,11 +11,11 @@ GENERATOR_LR = 0.0002 # Learning rate for the generators
 Z_SHAPE = (16, 21, 21) # Don't change!
 KL_WEIGHT = 0.01 # KL weight, the bigger the number the more diverse the generators are forced to be
 KL_WEIGHT_SCHEDULE = 1 # KL weight schedule. use 1 for no schedule #TODO: Implement schedule
-GEN_LOSS = "target" # even - true is 0, others equal probability
+GEN_LOSS = "even" # even - true is 0, others equal probability
                 # target - true is 0, some other target is 1
                 # easiest - true is 0, some other target is 1, but the easiest one
                 # easiest_exp
-EPOCHS = 50
+EPOCHS = 10
 DISABLE_ATTACK = True
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
