@@ -40,6 +40,8 @@ def apply_fgsm_attack(model, epsilon, original_images, labels, criterion):
     with torch.no_grad():
         perturbed_predictions = model(perturbed_data)
 
+    model.zero_grad()  # Reset gradients for model parameters
+
     return perturbed_predictions, perturbed_data
     
     # # Set the model to evaluation mode
@@ -83,6 +85,8 @@ def apply_targeted_fgsm_attack(model, epsilon, original_images, labels, criterio
     with torch.no_grad():
         perturbed_predictions = model(perturbed_image)
 
+    model.zero_grad() # zero gradients
+
     return perturbed_predictions, perturbed_image
 
 
@@ -109,13 +113,19 @@ def apply_pgd_attack(model, epsilon, alpha, num_iter, original_images, labels, c
         
         # clip the perturbed image to be within the epsilon-ball and valid pixel range
         perturbed_image = torch.clamp(perturbed_image, original_images - epsilon, original_images + epsilon)
-        
+
         # detach the perturbed image and re-enable gradient computation
         perturbed_image = perturbed_image.detach()
         perturbed_image.requires_grad = True
     
         with torch.no_grad():
             perturbed_predictions = model(perturbed_image)
+
+    # # show perturbed
+    # plt.imshow(perturbed_image[0].permute(1, 2, 0).cpu().detach().numpy())
+    # plt.show()
+    
+    model.zero_grad()
 
     return perturbed_predictions, perturbed_image
 

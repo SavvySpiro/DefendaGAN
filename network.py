@@ -12,20 +12,31 @@ import config
 from itertools import combinations
 import copy
 
-class mnist_classifier(nn.Module):
-  def __init__(self, mnist_dim, layer_size, classes):
-    super(mnist_classifier, self).__init__()
-    self.flatten = nn.Flatten()
-    self.input_layer = nn.Linear(mnist_dim*mnist_dim, mnist_dim)
-    self.activation_layer = nn.ReLU()
-    self.output_layer = nn.Linear(mnist_dim, classes)
+class Mnist_Classifier(nn.Module):
+    def __init__(self, mnist_dim, classes):
+        super(Mnist_Classifier, self).__init__()
+        self.flatten = nn.Flatten()
+        self.input_layer = nn.Linear(mnist_dim*mnist_dim, mnist_dim)
+        self.activation_layer = nn.ReLU()
+        self.output_layer = nn.Linear(mnist_dim, classes)
+        self.optimizer = optim.Adam(self.parameters(), lr=config.DISCRIMINATOR_LR)
+        
+    def forward(self, input):
+        input = self.flatten(input)
+        input = self.input_layer(input)
+        input = self.activation_layer(input)
+        input = self.output_layer(input)
+        return input
     
-  def forward(self, input):
-    input = self.flatten(input)
-    input = self.input_layer(input)
-    input = self.activation_layer(input)
-    input = self.output_layer(input)
-    return input
+    def train_s(self, input, target):
+        self.optimizer.zero_grad()
+        output = self(input).float()
+        target = torch.nn.functional.one_hot(target, num_classes=10).float()
+        loss = nn.CrossEntropyLoss()
+        loss = loss(output, target)
+        loss.backward()
+        self.optimizer.step()
+        return loss
   
 class DiscriminatorNet(torch.nn.Module):
     """
@@ -79,9 +90,7 @@ class DiscriminatorNet(torch.nn.Module):
         )
 
         
-        self.optimizer = optim.Adam(self.parameters(), lr=0.0001)
-
-
+        self.optimizer = optim.Adam(self.parameters(), lr=config.DISCRIMINATOR_LR)
 
     def forward(self, x):
         x = x.view(x.size(0), 1, 28, 28)
@@ -102,7 +111,6 @@ class DiscriminatorNet(torch.nn.Module):
         return x
     
     def train_d(self, generator, real_data, adv_batch, all_labels):
-        N = real_data.size(0)
         # Reset gradients
         self.optimizer.zero_grad()
         # detach generator output
@@ -111,24 +119,30 @@ class DiscriminatorNet(torch.nn.Module):
         for param in generator.parameters():
             param.requires_grad = False
 
+        # for testing: black out all adv batch and see if the discriminator can still predict the correct label
+        # adv_batch = [torch.zeros_like(b) for b in adv_batch]
+
         # Get discriminator outputs for real and fake data
         prediction_real = self(real_data)
         prediction_fake = [self(b) for b in adv_batch]
 
         # first half is true data, second half is perturbed. 
-        all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10)
+        all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
+        # use softmax to get the probability of the true label
+        all_labels[all_labels == 1] = 0.9
+        all_labels[all_labels == 0] = 0.1
+
         # ensure inputs to CE are float
         prediction_real = prediction_real.float()
         prediction_fake = [p.float() for p in prediction_fake]
-        all_labels = all_labels.float()
 
         # choose prediction fake (produced by the n generators) which causes the worst loss
         prediction_fake = max(prediction_fake, key=lambda x: CEloss(x, all_labels))
 
         if config.DISABLE_ATTACK:
-            error = CEloss(prediction_real, all_labels)*2
+            error = CEloss(prediction_real, all_labels)
         else:
-            error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
+            error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)        
             
         error.backward()
 
@@ -141,7 +155,11 @@ class DiscriminatorNet(torch.nn.Module):
         
         # Return error and predictions for real and fake inputs
         error = error.detach()
-        return error, torch.cat((prediction_real, prediction_fake), 0)
+
+        if config.DISABLE_ATTACK:
+            return error, prediction_real, (CEloss(prediction_real, all_labels), torch.tensor(0.0))
+        
+        return error, torch.cat((prediction_real, prediction_fake), 0), (CEloss(prediction_real, all_labels), CEloss(prediction_fake, all_labels))
             
 
 class GeneratorNet(torch.nn.Module):
@@ -156,6 +174,11 @@ class GeneratorNet(torch.nn.Module):
         deconv2 (8,5,5) + RELU
         deconv3 (1,2,2) + tanh
         '''
+
+        self.input_transform = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=8, stride=1),  # From (1x28x28) to (16x21x21)
+            nn.ReLU()
+        )
 
         self.dconv1 = nn.Sequential(
             nn.ConvTranspose2d(in_channels=16, out_channels=16, kernel_size=(3,3), stride=1),
@@ -180,6 +203,7 @@ class GeneratorNet(torch.nn.Module):
     def forward(self, x):
         # x = x.view(x.size(0), 1, 28, 28)
         # print(x.shape)
+        x = self.input_transform(x)
         x = self.dconv1(x)
         x = self.Dropout(x)
         # print(x.shape)
@@ -190,19 +214,16 @@ class GeneratorNet(torch.nn.Module):
         # print(x.shape)
         return x.view(-1, 1, 28, 28)
     
-    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=0.001):
-        N = adv_batch.size(0)    
+    def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=config.REG_STRENGTH):
+        if config.DISABLE_ATTACK:
+            return 0, 0
+        
         # Reset gradients
         self.optimizer.zero_grad()    
 
-        if diversity_loss != 0:
-            diversity_loss = diversity_loss.detach()
         # freeze discriminator
         for param in discriminator.parameters():
             param.requires_grad = False
-
-        # Try to classify adversarial data 
-        prediction = (discriminator(adv_batch)).float()
 
         if config.GEN_LOSS == "even":
             # create labels where true label is 0 and remaining are equally distributed
@@ -210,7 +231,7 @@ class GeneratorNet(torch.nn.Module):
             # print(all_labels.shape)
             all_labels[all_labels == 0] = 1.0 / (all_labels.shape[1] - 1)
             # print(all_labels)
-            all_labels[all_labels == 1] = 0
+            all_labels[all_labels == 1] = 0.0
         if config.GEN_LOSS == "target":
             # choose random target that isnt the true label
             all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
@@ -272,15 +293,17 @@ class GeneratorNet(torch.nn.Module):
                     all_labels[i][all_labels[i] == 1] = 0.0
 
         # ensure inputs to CE are float
-        prediction = prediction.float()
+        prediction = (discriminator(adv_batch)).float()
         all_labels = all_labels.float()
 
         # Error is 
         error = MSEloss(prediction, all_labels)
+        # print("MSE Loss: ", error)
         
         if config.REGULARIZATION:
-            # enforce similarty of perturbed and unperturbed images
-            error += alpha * torch.sum(torch.abs(real_batch - adv_batch))
+            # enforce similarty of perturbed and unperturbed images L2 NORMALIZATION
+            error += alpha * torch.sum(torch.linalg.norm(real_batch - adv_batch, ord=2, dim=1))
+            # print("reg loss: ", torch.sum(torch.abs(real_batch - adv_batch)))
         # print("error", error)
 
         error.backward()    
@@ -292,6 +315,7 @@ class GeneratorNet(torch.nn.Module):
             param.requires_grad = True
 
         error = error.detach()
+
         return error + diversity_loss, error
 
     
@@ -304,6 +328,8 @@ class GeneratorNetGroup(torch.nn.Module):
         self.generators = [GeneratorNet() for n in range(num_generators)]
 
     def forward(self, x):
+        # add noise to x
+        x = x + noise(config.Z_SHAPE, x.size(0))
         vals = [gen(x) for gen in self.generators]
         return vals
     
@@ -315,115 +341,73 @@ class GeneratorNetGroup(torch.nn.Module):
     def parameters(self):
         return [param for gen in self.generators for param in gen.parameters()]
     
+    def state_dict(self):
+        return [gen.state_dict() for gen in self.generators]
+    
     def train_g(self, discriminator, real_batch, adv_batch, all_labels, kl_weight=config.KL_WEIGHT): #higher kl_weight means more diversity
-        # Train each generator while maximizing kl divergence between all generators (for diversity amoung generators)
-        noise_g = noise(config.Z_SHAPE, real_batch.size(0))
-        outputs = [gen(noise_g) for gen in self.generators] # get an example of the random data outputs
-        # check if outputs are the exact same
-
-        if config.N_GENERATOR == 1:
-            return self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)[0]
-        
-        diversity_loss = {}
-        # pairs = list(combinations(outputs, 2)) # wrong
-        pairs = list(combinations(enumerate(outputs), 2))  # Pair outputs with generator indices
-
-        # calculate the kl divergence between each pair of generators
-        # for pair in pairs:
-        for (idx_i, i), (idx_j, j) in pairs:
-            
-            # i = pair[0]
-                # j = pair[1]
-                # prepare for kl divergence, maintain properties necessary for kl divergence
-                # non-zero postive numbers
-                # i[i == 0] = 1e-6
-                # j[j == 0] = 1e-6
-                # i = i.clamp(min=1e-6)  # Ensure no zero values
-                # j = j.clamp(min=1e-6)
-                # scale to 0-1
-                # i = (i - i.min()) / (i.max() - i.min())
-                # j = (j - j.min()) / (j.max() - j.min())
-
-                if config.DIVERSITY_TYPE == "KL":
-                    # softmax over samples
-                    i = torch.nn.functional.softmax(i, dim=1)
-                    j = torch.nn.functional.softmax(j, dim=1)
-                    
-                    i = ((i+1) / 2) + 1e-12
-                    j = ((j+1) / 2) + 1e-12
-                    # normalize
-                    i = i / i.sum()
-                    j = j / j.sum()
-
-                    kl_ij = torch.nn.functional.kl_div(i.log(), j, reduction='batchmean')
-                    kl_ji = torch.nn.functional.kl_div(j.log(), i, reduction='batchmean')
-
-                    # unlogd
-                    # kl_ij = torch.exp(kl_ij)
-                    # kl_ji = torch.exp(kl_ji)
-                    
-                    if torch.isnan(kl_ij) or torch.isnan(kl_ji) or torch.isinf(kl_ij) or torch.isinf(kl_ji):
-                        print(f"NaN/Inf encountered! kl_ij: {kl_ij}, kl_ji: {kl_ji}, i: {i}, j: {j}")
-
-                    # total diversity value
-                    # diversity_loss[(i, j)] =  kl_ij + kl_ji #wrong
-                    diversity_loss[(idx_i, idx_j)] = kl_ij + kl_ji
-                    print("KL :", kl_ij, kl_ji)
-
-                elif config.DIVERSITY_TYPE == "cosine":
-                    # cosine similarity (over batch)
-                    i = i.view(i.size(0), -1)
-                    j = j.view(j.size(0), -1)
-                    i = torch.nn.functional.normalize(i, p=2, dim=1)
-                    j = torch.nn.functional.normalize(j, p=2, dim=1)
-                    cos_ij = torch.nn.functional.cosine_similarity(i, j, dim=1)
-                    cos_ji = torch.nn.functional.cosine_similarity(j, i, dim=1)
-                    # total diversity value
-                    diversity_loss[(idx_i, idx_j)] = 1 - (cos_ij + cos_ji) / 2
-
-
-            # kl div = how different are the output distributions of this pair of generators
-
-        # Train each generator
-        errors = [] 
+        # if only one generator, return the loss for that generator
         if config.N_GENERATOR == 1:
             return self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)
         
+        # Train each generator while maximizing kl divergence between all generators (for diversity amoung generators)
+        # noise_g = noise(config.Z_SHAPE, real_batch.size(0))
+        outputs = [gen(real_batch) for gen in self.generators] # get an example of the random data outputs
+        # check if outputs are the exact same
+
+        if config.DIVERSITY_TYPE == "KL":
+            stacked_outputs = torch.stack(outputs)
+            batch_size = stacked_outputs.size(1)
+            softmax_outputs = torch.nn.functional.softmax(stacked_outputs, dim=2)
+            rescaled = (softmax_outputs + 1) / 2 + 1e-12
+            normalized = rescaled / rescaled.sum()
+           
+            norm_i = normalized.unsqueeze(2).expand(-1, -1, config.N_GENERATOR, -1)
+            norm_j = normalized.unsqueeze(1).expand(-1, config.N_GENERATOR, -1, -1)
+
+            kl_ij = torch.nn.functional.kl_div(norm_i.log(), norm_j, reduction='batchmean')
+            kl_ji = torch.nn.functional.kl_div(norm_j.log(), norm_i, reduction='batchmean')
+
+            diversity_loss = kl_ij + kl_ji
+
+        elif config.DIVERSITY_TYPE == "cosine":
+            # Flatten all outputs for cosine similarity calculation
+            flat_outputs = torch.stack([out.view(out.size(0), -1) for out in outputs], dim=0)  # Shape: [N_generators, batch_size, features]
+
+            # Normalize outputs along the feature dimension
+            normalized_outputs = torch.nn.functional.normalize(flat_outputs, p=2, dim=2)  # Shape: [N_generators, batch_size, features]
+
+            # Compute pairwise cosine similarity using matrix multiplication
+            cosine_similarity_matrix = torch.einsum('gbi,gbj->gij', normalized_outputs, normalized_outputs)  # Shape: [N_generators, N_generators, batch_size]
+
+            # Compute diversity loss (1 - cosine similarity) averaged over the batch
+            diversity_loss = 1 - cosine_similarity_matrix.mean(dim=2)  # Shape: [N_generators, N_generators]
+
+        else:
+            raise ValueError(f"Invalid diversity type: {config.DIVERSITY_TYPE}")
+
+        # Train each generator
+        errors = [] 
         for i, gen in enumerate(self.generators):
             # consider the generator's individual performance WITH how seperate it's performance is relative to other generators
-            # grab the kl divergence for the current generator being referenced
-            # diversity_loss_curr = torch.tensor(np.sum([value for key,value in diversity_loss.items() if gen in key]))
 
-            diversity_loss_curr = torch.scalar_tensor(0.0)
-            for key, value in diversity_loss.items():
-                if i in key:
-                    diversity_loss_curr += value
-            
-            gen_loss, just_gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels, kl_weight*diversity_loss_curr)
+            # Mask out self-comparison and compute the sum
+            diversity_loss_curr = diversity_loss[i].sum() - diversity_loss[i, i]
+
+            # print(f"Generator {i} Diversity Loss: {diversity_loss_curr}")
+            if config.VARY_REG:
+                varied_reg = torch.pow(10, -torch.linspace(3, 8, len(self.generators))[i])
+                # print(f"Generator {i} Regularization: {varied_reg}")
+            gen_loss, just_gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels, kl_weight*diversity_loss_curr.detach(), varied_reg)
 
             errors.append(gen_loss)
-            wandb.log({f"Gen. {i} Diversity Loss": diversity_loss_curr})
+            wandb.log({f"Gen. {i} Diversity Loss": kl_weight*diversity_loss_curr})
             wandb.log({f"Gen. {i} Generator Loss": just_gen_loss})
         
         # choose random generator to return
         # return max(errors).detach()
         random_gen = torch.randint(0, len(self.generators), (1,))
         
-        return errors[random_gen].detach()
-
-def ones_target(size):
-    '''
-    Tensor containing ones, with shape = size
-    '''
-    data = Variable(torch.ones(size, 1))
-    return data
-
-def zeros_target(size):
-    '''
-    Tensor containing zeros, with shape = size
-    '''
-    data = Variable(torch.zeros(size, 1))
-    return data
+        return errors[random_gen].detach() + diversity_loss_curr, errors[random_gen].detach()
 
 def noise(size, batch_size=config.BATCH_SIZE):
     '''
@@ -432,23 +416,18 @@ def noise(size, batch_size=config.BATCH_SIZE):
     n = Variable(torch.rand(batch_size, *size) * 2 - 1)
     return n
 
-
-def normalize_loss(ema, val, alpha=0.5):
-    return alpha * val + (1 - alpha) * ema
-
-
-
 def run():
     # Initialize discriminator and generator(s)
     discriminator = DiscriminatorNet()
     generator = GeneratorNetGroup(config.N_GENERATOR)
-
+    mnist_classifier = Mnist_Classifier(28, 10)
 
     # Load data
     train_data = mnist_data(train=True)# Create loader with data, so that we can iterate over it
     train_data_loader = torch.utils.data.DataLoader(train_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
     test_data = mnist_data(train=False)
     test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
+    
     # Num batches
     num_batches = len(train_data_loader)
 
@@ -459,97 +438,128 @@ def run():
     d_test_acc = None
     for epoch in range(num_epochs):
         for n_batch, (real_batch, labels) in enumerate(train_data_loader):
-            N = real_batch.size(0)       
 
-            noise_data = noise(config.Z_SHAPE, real_batch.size(0))
+            # noise_data = noise(config.Z_SHAPE, real_batch.size(0))
+            adv_batch = [g + real_batch for g in generator(real_batch)]
 
-            if config.DISABLE_ATTACK:
-                adv_batch = [copy.deepcopy(real_batch)]
-            else:
-                adv_batch = [g + real_batch for g in generator(noise_data)]
             # discriminator winning
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
 
                 #1. Train Generator
-                if not config.DISABLE_ATTACK:
-                    g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
-                else:
-                    g_error = 0
+                g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)   
 
                 #2.  Train Discriminator
-                d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
+                d_error, d_pred, loss_tup = discriminator.train_d(generator, real_batch, adv_batch, labels)
 
             # Generator winning or no data yet
-            elif d_test_acc == None or g_test_acc <= d_test_acc:
+            else:
 
                 # 1. Train Discriminator
-                d_error, d_pred = discriminator.train_d(generator, real_batch, adv_batch, labels)
+                d_error, d_pred, loss_tup = discriminator.train_d(generator, real_batch, adv_batch, labels)
 
-                # 2. Train Generator        
-                if not config.DISABLE_ATTACK:
-                    g_error = generator.train_g(discriminator, real_batch, adv_batch, labels)   
-                else:
-                    g_error = 0
-            else:
-                print("Error: Training not defined")
+                # 2. Train Generator      
+
+                # Train gen until discriminator fails to a certain amount
+                d_fail = 1
+                prev_d_fail = 0
+                counter = 0
+                while d_fail > 0.8 and abs(d_fail-prev_d_fail) > 0.001:
+                    # Train gen
+                    g_error, _ = generator.train_g(discriminator, real_batch, adv_batch, labels)
+                    prev_d_fail = d_fail# Get discriminator error
+                    adv_batch = [g + real_batch for g in generator(real_batch)]
+                    d_pred = discriminator(adv_batch[0])
+                    d_fail = torch.sum(torch.argmax(d_pred, dim=1) == labels).float() / len(labels)
+                    counter += 1
+                    # print(f"Discriminator accuracy: {d_fail}")
+                    
+
+                # if counter > 1:
+                #     print(f"Generator trained {counter} times")
+
+                # g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)
+
+            # train mnist classifier on side
+            mnist_error = mnist_classifier.train_s(real_batch, labels)
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
 
-            wandb.log({"Generator Error": g_error, "Discriminator Error": d_error})
+            wandb.log({"Generator Error": g_error, "Discriminator Error": d_error, "Mnist Classifier Error": mnist_error})
 
             # Display Progress every few batches
             if (n_batch) % config.BATCH_SIZE == 0:
-                # choose next test batch from test data loader. if end of data, reset. we can do performance on entire test set later.
-                try:
-                    test_batch, labels = next(iter(test_data_loader)) 
-                except StopIteration:
-                    test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
-                    test_batch, labels = next(iter(test_data_loader))
+                with torch.no_grad():   
+                    # choose next test batch from test data loader. if end of data, reset. we can do performance on entire test set later.
+                    try:
+                        test_batch, labels = next(iter(test_data_loader)) 
+                    except StopIteration:
+                        test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
+                        test_batch, labels = next(iter(test_data_loader))
 
-                test_batch.to(config.DEVICE)
-                test_batch.requires_grad = True 
+                    test_batch.to(config.DEVICE)
+                    test_batch.requires_grad = True 
 
-                # Sample some noise and generate test images from the current batch
-                if not config.DISABLE_ATTACK:
-                    test_images_noise = generator(noise(config.Z_SHAPE))
+
+                    # Sample some noise and generate test images from the current batch
+                    test_images_noise = generator(test_batch)
+                    # print(test_images_noise[0], test_batch[0])
                     test_images = [g + test_batch for g in test_images_noise]
-                else:
-                    test_images_noise = generator(noise(config.Z_SHAPE))
-                    test_images = test_batch
-                
-                # Log Noise in wandb (default)
-                for i, img in enumerate(test_images_noise):
-                    logger.log_images("Generated Noise {}".format(i), img, 100, epoch, n_batch, num_batches)
-                # Log Generated Images in wandb
-                for i, img in enumerate(test_images):
-                    logger.log_images("Generated {}".format(i), img, 100, epoch, n_batch, num_batches)
 
-                # Display status Logs
-                logger.display_status(epoch, num_epochs, n_batch, num_batches, d_error, g_error, d_pred)
+                    # print ball of noise
+                    print([torch.mean(torch.linalg.norm(test_images_noise[i], ord=1, dim=1)) for i in range(len(test_images_noise))])
 
-                # Log discriminator error on perturbed and unperturbed data       
-                discriminator.eval()    
-                unperturbed = discriminator(Variable(images_to_vectors(test_batch)))
-                perturbed = [discriminator(Variable(images_to_vectors(p))) for p in test_images]
+                    # Log Noise in wandb (default)
+                    for i, img in enumerate(test_images_noise):
+                        # normalize to 0-1
+                        img = (img - torch.min(img)) / (torch.max(img) - torch.min(img))
+                        logger.log_images("Generated Noise {}".format(i), img, 100, epoch, n_batch, num_batches)
 
-                # calculate accuracy
-                unperturbed_accuracy = torch.sum(torch.argmax(unperturbed, dim=1) == labels).float() / len(labels)
-                perturbed_accuracy = [torch.sum(torch.argmax(p, dim=1) == labels).float() / len(labels) for p in perturbed]
+                    # Log Generated Images in wandb
+                    for i, img in enumerate(test_images):
+                        img = (img - torch.min(img)) / (torch.max(img) - torch.min(img))
+                        logger.log_images("Generated {}".format(i), img, 100, epoch, n_batch, num_batches)
 
-                g_test_acc = min(perturbed_accuracy)
-                d_test_acc = unperturbed_accuracy
+                    # # Log Real Images in wandb
+                    # for i, img in enumerate(test_batch):
+                    #     logger.log_images("Gen input {}".format(i), img, 100, epoch, n_batch, num_batches)
 
-                wandb_log = {"Unperturbed Accuracy": unperturbed_accuracy}
-                if config.N_GENERATOR == 1:
-                    wandb_log["Perturbed Accuracy"] = perturbed_accuracy[0]
-                else:
-                    wandb_log["Min Perturbed Accuracy"] = min(perturbed_accuracy)
-                    wandb_log["Max Perturbed Accuracy"] = max(perturbed_accuracy)
+                    # Display status Logs
+                    logger.display_status(epoch, num_epochs, n_batch, num_batches, d_error, g_error, d_pred)
 
-                wandb.log(wandb_log)
+                    print("Disc Loss each type: ", loss_tup[0].item(), loss_tup[1].item())
 
+                    wandb.log({"Gen Noise Max: ": torch.max(test_images_noise[0]), "Gen Noise Min: ": torch.min(test_images_noise[0])})
+
+                    # Log discriminator error on perturbed and unperturbed data       
+                    discriminator.eval()    
+                    unperturbed = discriminator(Variable(images_to_vectors(test_batch)))
+                    perturbed = [discriminator(Variable(images_to_vectors(p))) for p in test_images]
+                    mnist_classifications = mnist_classifier(Variable(images_to_vectors(test_images[0])))
+
+                    # calculate accuracy
+                    unperturbed_accuracy = torch.sum(torch.argmax(unperturbed, dim=1) == labels).float() / len(labels)
+                    perturbed_accuracy = [torch.sum(torch.argmax(p, dim=1) == labels).float() / len(labels) for p in perturbed]
+                    mnist_performance = torch.sum(torch.argmax(mnist_classifications, dim=1) == labels).float() / len(labels)
+
+                    g_test_acc = min(perturbed_accuracy)
+                    d_test_acc = unperturbed_accuracy
+
+                    wandb_log = {"Unperturbed Accuracy": unperturbed_accuracy}
+                    
+                    if config.N_GENERATOR == 1:
+                        wandb_log["Perturbed Accuracy"] = perturbed_accuracy[0]
+                    else:
+                        wandb_log["Min Perturbed Accuracy"] = min(perturbed_accuracy)
+                        wandb_log["Max Perturbed Accuracy"] = max(perturbed_accuracy)
+
+                    wandb_log["Mnist Classifier Accuracy"] = mnist_performance
+                        
+                    wandb.log(wandb_log)
+
+                # Not in no-grad because need gradients to calculate adversarial examples
                 # Record fgsm error compared to perturbed data
+                # ensure attack isnt changing params
                 fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.3, test_batch, labels, CEloss)
                 fgsm_perturbed_accuracy = torch.sum(torch.argmax(fgsm_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"FGSM Perturbed Accuracy": fgsm_perturbed_accuracy})
@@ -562,26 +572,16 @@ def run():
                 pgd_perturbed_accuracy = torch.sum(torch.argmax(pgd_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"PGD Perturbed Accuracy": pgd_perturbed_accuracy})
 
+                
 
-        d_losses.append(d_error.detach().numpy())
-        
-        if config.DISABLE_ATTACK:
-            g_losses.append(g_error)
-        else:
-            g_losses.append(g_error.detach().numpy())
+        d_losses.append(d_error)
+        g_losses.append(g_error)
     
-    fig = plt.figure()
-    plt.plot(list(range(1, num_epochs+1)), d_losses, label="Discriminator")
-    plt.plot(list(range(1, num_epochs+1)), g_losses, label="Generator")
-    plt.xlabel("epoch")
-    plt.ylabel("loss")
-    plt.legend()
-    plt.show()
     wandb.finish()
 
     # Save models
-    utils.save_model(generator, config, name="generator_")
-    utils.save_model(discriminator, config, name="discriminator_")
+    utils.save_model(generator, config, name="generator_" + wandb.run.name, override=True)
+    utils.save_model(discriminator, config, name="discriminator_" + wandb.run.name, override=True)
 
 if __name__ == "__main__":    
 
