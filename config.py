@@ -19,6 +19,7 @@ GEN_LOSS = "even" # even - true is 0, others equal probability
                 # target - true is 0, some other target is 1
                 # easiest - true is 0, some other target is 1, but the easiest one
                 # easiest_exp
+TRAIN_GEN_MAX = True # True or False, where true means the generator is trained many times on each run to catch up
 EPOCHS = 50
 DISABLE_ATTACK = False # True or False, where true means the discriminator is disabled
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

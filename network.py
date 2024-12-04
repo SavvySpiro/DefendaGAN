@@ -460,24 +460,25 @@ def run():
                 # 2. Train Generator      
 
                 # Train gen until discriminator fails to a certain amount
-                d_fail = 1
-                prev_d_fail = 0
-                counter = 0
-                while d_fail > 0.8 and abs(d_fail-prev_d_fail) > 0.001:
-                    # Train gen
-                    g_error, _ = generator.train_g(discriminator, real_batch, adv_batch, labels)
-                    prev_d_fail = d_fail# Get discriminator error
-                    adv_batch = [g + real_batch for g in generator(real_batch)]
-                    d_pred = discriminator(adv_batch[0])
-                    d_fail = torch.sum(torch.argmax(d_pred, dim=1) == labels).float() / len(labels)
-                    counter += 1
-                    # print(f"Discriminator accuracy: {d_fail}")
-                    
+                if config.TRAIN_GEN_MAX:
+                    d_fail = 1
+                    prev_d_fail = 0
+                    counter = 0
+                    while d_fail > 0.8 and abs(d_fail-prev_d_fail) > 0.001:
+                        # Train gen
+                        g_error, _ = generator.train_g(discriminator, real_batch, adv_batch, labels)
+                        prev_d_fail = d_fail# Get discriminator error
+                        adv_batch = [g + real_batch for g in generator(real_batch)]
+                        d_pred = discriminator(adv_batch[0])
+                        d_fail = torch.sum(torch.argmax(d_pred, dim=1) == labels).float() / len(labels)
+                        counter += 1
+                        # print(f"Discriminator accuracy: {d_fail}")
+                        
 
-                # if counter > 1:
-                #     print(f"Generator trained {counter} times")
-
-                # g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)
+                    # if counter > 1:
+                    #     print(f"Generator trained {counter} times")
+                else:
+                    g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)
 
             # train mnist classifier on side
             mnist_error = mnist_classifier.train_s(real_batch, labels)
@@ -572,7 +573,7 @@ def run():
                 pgd_perturbed_accuracy = torch.sum(torch.argmax(pgd_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"PGD Perturbed Accuracy": pgd_perturbed_accuracy})
 
-                
+
 
         d_losses.append(d_error)
         g_losses.append(g_error)
