@@ -126,7 +126,7 @@ class DiscriminatorNet(torch.nn.Module):
         prediction_fake = max(prediction_fake, key=lambda x: CEloss(x, all_labels))
 
         if config.DISABLE_ATTACK:
-            error = CEloss(prediction_real, all_labels)
+            error = CEloss(prediction_real, all_labels) + CEloss(prediction_real, all_labels)
         else:
             error = CEloss(prediction_real, all_labels) + CEloss(prediction_fake, all_labels)
             
@@ -440,7 +440,7 @@ def run():
 
             noise_data = noise(config.Z_SHAPE, real_batch.size(0))
             if config.DISABLE_ATTACK:
-                adv_batch = [torch.clamp(g*0 + real_batch, -1, 1) for g in generator(noise_data)]
+                adv_batch = real_batch
             else:
                 adv_batch = [torch.clamp(g + real_batch, -1, 1) for g in generator(noise_data)]
             # discriminator winning
