@@ -165,7 +165,7 @@ def load_model(model, path):
         # its a generator model, meaning load each generator rather than the model
         state_dict_list = torch.load(path)
         for i, generator in enumerate(model.generators):
-            generator.generators = torch.load_state_dict(state_dict_list[i])
+            generator.generators = generator.load_state_dict(state_dict_list[i])
     else:
         model.load_state_dict(torch.load(path))
 

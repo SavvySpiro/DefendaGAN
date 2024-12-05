@@ -17,13 +17,13 @@ def noise(size, batch_size=config.BATCH_SIZE):
 
 if __name__ == "__main__":    
     # load baseline victim model
-    state_dict_path = "generator_balmy-aardvark-397.pth"
+    state_dict_path = "models/baseline_mnist.pth"
     criterion = nn.CrossEntropyLoss() # cross entropy loss
-    victim_baseline = utils.load_model(network.mnist_classifier(28, 128, 10), state_dict_path)
+    victim_baseline = utils.load_model(network.Mnist_Classifier(28, 10), state_dict_path)
 
     # load an attacking generator
     # state_dict_path = "generator_BATCH_SIZE_128_DEVICE_cuda_DISABLE_ATTACK_False_EPOCHS_5_GENERATOR_LR_0.0002_GEN_LOSS_target_3_INPUT_TYPE_noise_KL_WEIGHT_0.01_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_False_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"
-    all_models = ["/home/hanna/Documents/DefendaGAN/generator_BATCH_SIZE_128_DEVICE_cuda_DISABLE_ATTACK_False_EPOCHS_50_GENERATOR_LR_0.001_GEN_LOSS_target_7_INPUT_TYPE_noise_KL_WEIGHT_0.01_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_False_Z_SHAPE_(16, 21, 21)_.pth"]
+    all_models = ["/home/hanna/Documents/DefendaGAN/generator_dandy-disco-321.pth"]
     
     # load a discriminator
     state_dict_path = "/home/hanna/Documents/DefendaGAN/models/alt and gen loss/alt/rural-capybara-158 (alt, even)/discriminator_BATCH_SIZE_128_EPOCHS_50_GEN_LOSS_even_INPUT_TYPE_noise_KL_WEIGHT_100_KL_WEIGHT_SCHEDULE_1_N_GENERATOR_1_REGULARIZATION_True_TRAINING_ALTERNATE_True_Z_SHAPE_(16, 21, 21)_.pth"
