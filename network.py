@@ -578,12 +578,13 @@ def run():
         d_losses.append(d_error)
         g_losses.append(g_error)
     
-    wandb.finish()
 
     # Save models
     utils.save_model(generator, config, name="generator_" + wandb.run.name, override=True)
     utils.save_model(discriminator, config, name="discriminator_" + wandb.run.name, override=True)
 
+    wandb.finish()
+    
 if __name__ == "__main__":    
 
     # Initialize wandb

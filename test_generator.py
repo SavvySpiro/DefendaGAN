@@ -17,7 +17,7 @@ def noise(size, batch_size=config.BATCH_SIZE):
 
 if __name__ == "__main__":    
     # load baseline victim model
-    state_dict_path = "models/baseline_mnist.pth"
+    state_dict_path = "generator_balmy-aardvark-397.pth"
     criterion = nn.CrossEntropyLoss() # cross entropy loss
     victim_baseline = utils.load_model(network.mnist_classifier(28, 128, 10), state_dict_path)
 

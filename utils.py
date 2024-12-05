@@ -148,13 +148,25 @@ def vectors_to_images(vectors):
 
 def save_model(model, config, name="", override=False):
     # saves the model with the config -> name. config is a module with the config variables
+
     if not override:
         for key in dir(config):
             if not key.startswith("__") and not (key=="torch"):
                 name += key + "_" + str(getattr(config, key)) + "_"
 
-    torch.save(model.state_dict(), name + ".pth")
+    if hasattr(model, "generators"):
+        # its a generator model, meaning save each generator rather than the model
+        torch.save([gen.state_dict() for gen in model.generators], name + ".pth")
+    else:
+        torch.save(model.state_dict(), name + ".pth")
 
 def load_model(model, path):
-    model.load_state_dict(torch.load(path))
+    if hasattr(model, "generators"):
+        # its a generator model, meaning load each generator rather than the model
+        state_dict_list = torch.load(path)
+        for i, generator in enumerate(model.generators):
+            generator.generators = torch.load_state_dict(state_dict_list[i])
+    else:
+        model.load_state_dict(torch.load(path))
+
     return model
