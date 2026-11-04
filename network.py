@@ -578,6 +578,9 @@ def run():
                 pgd_perturbed_accuracy = torch.sum(torch.argmax(pgd_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"PGD Perturbed Accuracy": pgd_perturbed_accuracy})
 
+                # evaluation and the attacks put the discriminator in eval mode; restore training mode (dropout)
+                discriminator.train()
+
                 # print("FGSM Perturbed Accuracy: ", fgsm_perturbed_accuracy)
                 # print("PGD Perturbed Accuracy: ", pgd_perturbed_accuracy)
 
