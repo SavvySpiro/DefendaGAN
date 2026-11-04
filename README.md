@@ -54,7 +54,7 @@ paths, so edit those before running them.
 
 ## Setup
 
-Requires Python 3.10. A CUDA GPU is optional (see Known issues).
+Requires Python 3.10.
 
 ```bash
 python -m venv .venv
@@ -90,23 +90,6 @@ wandb login            # or: export WANDB_MODE=offline
 
 Datasets, checkpoints, `wandb/` and `runs/` are git-ignored. Keep results in W&B, or move the
 checkpoints you care about into `models/`.
-
-## Known issues
-
-These are carried over from the notes in `config.py` and from reading the code:
-
-- **The models never move to the GPU.** `DEVICE` is computed but never applied: neither the models
-  nor the batches are moved to it, and `test_batch.to(DEVICE)` discards its result. Training runs
-  on the CPU.
-- **`GEN_LOSS = "easiest"` and `"easiest_exp"` crash.** They read `prediction` before it is
-  assigned in `GeneratorNet.train_g`.
-- **`VARY_REG = False` breaks multi-generator runs.** `varied_reg` is then undefined when
-  `N_GENERATOR > 1`.
-- `KL_WEIGHT_SCHEDULE` and `INPUT_TYPE = "image"` are not implemented yet.
-- **Open research questions:**
-  - With `DISABLE_ATTACK = True`, the baseline classifier is unexpectedly robust.
-  - `TRAINING_ALTERNATE` and the choice of `GEN_LOSS` make little measurable difference.
-- `test_*.py` and `visualize.py` still assume MNIST (28×28 grayscale).
 
 ## Authors
 
