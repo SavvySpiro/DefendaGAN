@@ -47,6 +47,7 @@ class Logger:
         '''
         if type(images) == np.ndarray:
             images = torch.from_numpy(images)
+        images = images.detach().cpu()
         
         if format=='NHWC':
             images = images.transpose(1,3)
@@ -164,10 +165,10 @@ def save_model(model, config, name="", override=False):
 def load_model(model, path):
     if hasattr(model, "generators"):
         # its a generator model, meaning load each generator rather than the model
-        state_dict_list = torch.load(path)
+        state_dict_list = torch.load(path, map_location=config.DEVICE)
         for i, generator in enumerate(model.generators):
             generator.generators = generator.load_state_dict(state_dict_list[i])
     else:
-        model.load_state_dict(torch.load(path))
+        model.load_state_dict(torch.load(path, map_location=config.DEVICE))
 
     return model

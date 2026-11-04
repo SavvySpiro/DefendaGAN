@@ -233,75 +233,38 @@ class GeneratorNet(torch.nn.Module):
         for param in discriminator.parameters():
             param.requires_grad = False
 
-        if config.GEN_LOSS == "even":
-            # create labels where true label is 0 and remaining are equally distributed
-            all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
-            # print(all_labels.shape)
-            all_labels[all_labels == 0] = 1.0 / (all_labels.shape[1] - 1)
-            # print(all_labels)
-            all_labels[all_labels == 1] = 0.0
-        if config.GEN_LOSS == "target":
-            # choose random target that isnt the true label
-            all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
-            zero_positions = (all_labels == 0)
-            random_choices = torch.multinomial(zero_positions.float(), 1).squeeze(1)  # (batch_size,)
-            all_labels_targeted = torch.nn.functional.one_hot(random_choices, num_classes=10).float()
-            # ensure true label is 0
-            assert(all_labels_targeted[all_labels == 1].sum() == 0)
-
-            all_labels = all_labels_targeted
-        if config.GEN_LOSS == "easiest":
-            # choose the target predictions that is second highest, likely the easiest to fool
-            targets = torch.argsort(prediction, dim=1, descending=True)
-            all_labels = torch.nn.functional.one_hot(targets[:, 1], num_classes=10).float()
-            all_labels = all_labels
-        if config.GEN_LOSS == "easiest_exp":
-            targets = torch.argsort(prediction, dim=1, descending=True)
-            # Create one-hot encoded labels
-            all_labels = torch.nn.functional.one_hot(all_labels, num_classes=10).float()
-
-            # Set the true label to 0 and others to decreasing values
-            for i in range(all_labels.shape[0]):
-                # Get the index of the true label (assuming target is the first element in the sorted targets)
-                true_label = (all_labels[i] == 1).nonzero(as_tuple=True)[0].item()  # Extract the index of the true label
-                predicted_label = (targets[i] == 0).nonzero(as_tuple=True)[0].item()
-
-                # only if the prediction is correct, try to fool the discrimination by assigning 0 probably to the 
-                # actual class and exponentially decreasing probability from the second most likely class onwards
-                # MODIFICATION to assigning uniform probablity as in the "even" option
-                if true_label == predicted_label: 
-                    # print("prediction: ", prediction[i])
-                    # print("target: ", targets[i])
-                    # print("sorted: ", prediction[i][targets[i]])
-
-                    # Generate exponentially decreasing values
-                    base = 0.5  # You can choose the base for exponential decay
-                    values = base ** torch.arange(9).float()
-                    # Normalize to make it a probability distribution
-                    values = values / values.sum()
-                    values = torch.cat((torch.tensor([0]), values))
-
-                    # # Assign the decreasing values to the remaining labels
-                    # print("BEFORE: ", all_labels[i])
-                    # print(f"prediction[i] :     {prediction[i]}")
-                    # print(f"targets[i] :        {targets[i] }")
-                    # print(f"values[i] :         {values}")
-                    # print(" *****************************************")
-                    for ind in range(10):
-                        # print("NEW probability: ", values[ind])
-                        destination = torch.nonzero(targets[i] == ind, as_tuple=True)[0][0]
-                        # print("index of where it's going ", destination)
-                        all_labels[i][destination] = values[ind]
-                        # print("UPDATE: ", all_labels[i])
-                        # print(" *****************************************")
-
-                else: # just assign uniform probably to all other classes, assign true class to be zero
-                    all_labels[i][all_labels[i] == 0] = 1.0 / (all_labels[i].shape[0] - 1)
-                    # print(all_labels)
-                    all_labels[i][all_labels[i] == 1] = 0.0
-
-        # ensure inputs to CE are float
+        # Discriminator's prediction on the adversarial batch (needed both for the loss and, for the
+        # "easiest" variants, for choosing the target distribution)
         prediction = (discriminator(adv_batch)).float()
+        true_labels = all_labels
+        one_hot = torch.nn.functional.one_hot(true_labels, num_classes=10).float()
+
+        if config.GEN_LOSS == "even":
+            # true label is 0, remaining classes equally likely
+            all_labels = (1.0 - one_hot) / (one_hot.shape[1] - 1)
+        elif config.GEN_LOSS == "target":
+            # choose a random target class that isn't the true label
+            random_choices = torch.multinomial(1.0 - one_hot, 1).squeeze(1)  # (batch_size,)
+            all_labels = torch.nn.functional.one_hot(random_choices, num_classes=10).float()
+            # ensure true label is 0
+            assert(all_labels[one_hot == 1].sum() == 0)
+        elif config.GEN_LOSS == "easiest":
+            # target the class the discriminator ranks highest after the true label, likely the easiest to fool into
+            ranked = torch.argsort(prediction.detach().masked_fill(one_hot == 1, -float("inf")), dim=1, descending=True)
+            all_labels = torch.nn.functional.one_hot(ranked[:, 0], num_classes=10).float()
+        elif config.GEN_LOSS == "easiest_exp":
+            # If the discriminator is correct: give the true (top-ranked) class 0 probability and the remaining
+            # classes exponentially decreasing probability by rank (second most likely gets the most).
+            # If it is already wrong: fall back to the uniform "even" distribution.
+            ranked = torch.argsort(prediction.detach(), dim=1, descending=True)  # class indices, most likely first
+            decay = 0.5 ** torch.arange(9, device=prediction.device, dtype=torch.float)
+            by_rank = torch.cat((torch.zeros(1, device=prediction.device), decay / decay.sum()))
+            exp_labels = torch.zeros_like(one_hot).scatter_(1, ranked, by_rank.expand_as(one_hot))
+            even_labels = (1.0 - one_hot) / (one_hot.shape[1] - 1)
+            correct = (ranked[:, 0] == true_labels).unsqueeze(1)
+            all_labels = torch.where(correct, exp_labels, even_labels)
+        else:
+            raise ValueError(f"Invalid GEN_LOSS: {config.GEN_LOSS}")
         all_labels = all_labels.float()
 
         # Error is 
@@ -333,7 +296,8 @@ class GeneratorNetGroup(torch.nn.Module):
     '''
     def __init__(self, num_generators, img_in_channels=1):
         super(GeneratorNetGroup, self).__init__()
-        self.generators = [GeneratorNet(img_in_channels) for n in range(num_generators)]
+        # ModuleList (not a plain list) so .to(device) / .train() / .eval() reach every generator
+        self.generators = nn.ModuleList([GeneratorNet(img_in_channels) for n in range(num_generators)])
 
     def forward(self, x):
         # add noise to x
@@ -409,7 +373,9 @@ class GeneratorNetGroup(torch.nn.Module):
 
             # print(f"Generator {i} Diversity Loss: {diversity_loss_curr}")
             if config.VARY_REG:
-                varied_reg = torch.pow(10, -torch.linspace(3, 8, len(self.generators))[i])
+                varied_reg = torch.pow(10, -torch.linspace(3, 8, len(self.generators))[i]).item()
+            else:
+                varied_reg = config.REG_STRENGTH
                 # print(f"Generator {i} Regularization: {varied_reg}")
             gen_loss, just_gen_loss = gen.train_g(discriminator, real_batch, adv_batch[i], all_labels, kl_weight*diversity_loss_curr.detach(), varied_reg)
 
@@ -429,7 +395,7 @@ def noise(size, batch_size=config.BATCH_SIZE):
     '''
     Generates a 1-d vector of gaussian sampled random values
     '''
-    n = Variable(torch.rand(batch_size, *size) * 2 - 1)
+    n = Variable(torch.rand(batch_size, *size, device=config.DEVICE) * 2 - 1)
     return n
 
 def run():
@@ -444,6 +410,8 @@ def run():
     # Initialize discriminator and generator(s)
     discriminator = DiscriminatorNet(config.Z_SHAPE[0])
     generator = GeneratorNetGroup(config.N_GENERATOR, config.Z_SHAPE[0])
+    discriminator.to(config.DEVICE)
+    generator.to(config.DEVICE)
     # mnist_classifier = Mnist_Classifier(28, 10)
 
     # Num batches
@@ -456,6 +424,7 @@ def run():
     d_test_acc = None
     for epoch in range(num_epochs):
         for n_batch, (real_batch, labels) in enumerate(train_data_loader):
+            real_batch, labels = real_batch.to(config.DEVICE), labels.to(config.DEVICE)
 
             # noise_data = noise(config.Z_SHAPE, real_batch.size(0))
             adv_batch = [g + real_batch for g in generator(real_batch)]
@@ -522,7 +491,7 @@ def run():
                         test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
                         test_batch, labels = next(iter(test_data_loader))
 
-                    test_batch.to(config.DEVICE)
+                    test_batch, labels = test_batch.to(config.DEVICE), labels.to(config.DEVICE)
                     test_batch.requires_grad = True 
 
 
