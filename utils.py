@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 import torch
 import PIL
 import wandb
+import config
 
 '''
     TensorBoard Data will be stored in './runs' path
@@ -46,6 +47,7 @@ class Logger:
         '''
         if type(images) == np.ndarray:
             images = torch.from_numpy(images)
+        images = images.detach().cpu()
         
         if format=='NHWC':
             images = images.transpose(1,3)
@@ -141,10 +143,10 @@ class Logger:
 
 
 def images_to_vectors(images):
-    return images.view(images.size(0), 784)
+    return images.view(images.size(0), config.Z_SHAPE[0]*config.Z_SHAPE[1] * config.Z_SHAPE[2])
 
 def vectors_to_images(vectors):
-    return vectors.view(vectors.size(0), 1, 28, 28)
+    return vectors.view(vectors.size(0), config.Z_SHAPE[0], config.Z_SHAPE[1], config.Z_SHAPE[2])
 
 def save_model(model, config, name="", override=False):
     # saves the model with the config -> name. config is a module with the config variables
@@ -163,10 +165,10 @@ def save_model(model, config, name="", override=False):
 def load_model(model, path):
     if hasattr(model, "generators"):
         # its a generator model, meaning load each generator rather than the model
-        state_dict_list = torch.load(path)
+        state_dict_list = torch.load(path, map_location=config.DEVICE)
         for i, generator in enumerate(model.generators):
             generator.generators = generator.load_state_dict(state_dict_list[i])
     else:
-        model.load_state_dict(torch.load(path))
+        model.load_state_dict(torch.load(path, map_location=config.DEVICE))
 
     return model
