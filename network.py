@@ -3,7 +3,7 @@ from torch import nn, optim
 import torch
 from torch.autograd.variable import Variable
 from utils import vectors_to_images, images_to_vectors, Logger
-from dataset import mnist_data
+from dataset import mnist_data, cifar10_data
 from matplotlib import pyplot as plt
 import numpy as np
 import utils
@@ -42,7 +42,7 @@ class DiscriminatorNet(torch.nn.Module):
     """
     A three hidden-layer discriminative neural network
     """
-    def __init__(self):
+    def __init__(self, img_in_channels=1):
         super(DiscriminatorNet, self).__init__()
         
         '''
@@ -56,7 +56,7 @@ class DiscriminatorNet(torch.nn.Module):
         '''
 
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(3,3), stride=1),
+            nn.Conv2d(in_channels=img_in_channels, out_channels=32, kernel_size=(3,3), stride=1),
             nn.ReLU(),
             nn.Dropout(0.5),    
             nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3,3), stride=1),
@@ -76,7 +76,7 @@ class DiscriminatorNet(torch.nn.Module):
         )
 
         self.fc = nn.Sequential(
-            nn.Linear(1024, 200),
+            nn.Linear(1600, 200),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(200, 200),
@@ -93,7 +93,7 @@ class DiscriminatorNet(torch.nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=config.DISCRIMINATOR_LR)
 
     def forward(self, x):
-        x = x.view(x.size(0), 1, 28, 28)
+        x = x.view(x.size(0), config.Z_SHAPE[0], config.Z_SHAPE[1], config.Z_SHAPE[2])
         x = self.conv1(x)
         # print(x.shape)
         x = self.maxpool(x)
@@ -111,6 +111,10 @@ class DiscriminatorNet(torch.nn.Module):
         return x
     
     def train_d(self, generator, real_data, adv_batch, all_labels):
+
+        if any([torch.isnan(b).any() or torch.isinf(b).any() for b in adv_batch]):
+            raise ValueError("Adversarial batch contains nan or inf values")
+        
         # Reset gradients
         self.optimizer.zero_grad()
         # detach generator output
@@ -166,7 +170,7 @@ class GeneratorNet(torch.nn.Module):
     """
     A three hidden-layer generative neural network
     """
-    def __init__(self):
+    def __init__(self, img_in_channels=1):
         super(GeneratorNet, self).__init__()
         
         '''
@@ -176,22 +180,22 @@ class GeneratorNet(torch.nn.Module):
         '''
 
         self.input_transform = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=8, stride=1),  # From (1x28x28) to (16x21x21)
+            nn.Conv2d(in_channels=img_in_channels, out_channels=16, kernel_size=8, stride=1),  # From (1x28x28) to (16x21x21)
             nn.ReLU()
         )
 
         self.dconv1 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=16, out_channels=16, kernel_size=(3,3), stride=1),
+            nn.ConvTranspose2d(in_channels=16, out_channels=16, kernel_size=(3,3), stride=1), # From (16x21x21) to (16x23x23)
             nn.ReLU() 
         )
 
         self.dconv2 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=(5,5), stride=1),
+            nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=(5,5), stride=1), # From (16x23x23) to (8x27x27)
             nn.ReLU()
         )
 
         self.dconv3 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=8, out_channels=1, kernel_size=(2,2), stride=1),
+            nn.ConvTranspose2d(in_channels=8, out_channels=img_in_channels, kernel_size=(2,2), stride=1), # From (8x27x27) to (1x28x28)
             nn.Tanh()
         )
 
@@ -212,11 +216,15 @@ class GeneratorNet(torch.nn.Module):
         # print(x.shape)
         x = self.dconv3(x)
         # print(x.shape)
-        return x.view(-1, 1, 28, 28)
+        return x.view(-1, config.Z_SHAPE[0], config.Z_SHAPE[1], config.Z_SHAPE[2])
     
     def train_g(self, discriminator, real_batch, adv_batch, all_labels, diversity_loss=0, alpha=config.REG_STRENGTH):
         if config.DISABLE_ATTACK:
             return 0, 0
+        
+
+        if any([torch.isnan(b).any() or torch.isinf(b).any() for b in adv_batch]):
+            raise ValueError("Adversarial batch contains nan or inf values")
         
         # Reset gradients
         self.optimizer.zero_grad()    
@@ -323,9 +331,9 @@ class GeneratorNetGroup(torch.nn.Module):
     '''
     Combines training of several generators
     '''
-    def __init__(self, num_generators):
+    def __init__(self, num_generators, img_in_channels=1):
         super(GeneratorNetGroup, self).__init__()
-        self.generators = [GeneratorNet() for n in range(num_generators)]
+        self.generators = [GeneratorNet(img_in_channels) for n in range(num_generators)]
 
     def forward(self, x):
         # add noise to x
@@ -345,6 +353,10 @@ class GeneratorNetGroup(torch.nn.Module):
         return [gen.state_dict() for gen in self.generators]
     
     def train_g(self, discriminator, real_batch, adv_batch, all_labels, kl_weight=config.KL_WEIGHT): #higher kl_weight means more diversity
+
+        # ensure adv batch is not nan or inf
+        if any([torch.isnan(b).any() or torch.isinf(b).any() for b in adv_batch]):
+            raise ValueError("Adversarial batch contains nan or inf values")
         # if only one generator, return the loss for that generator
         if config.N_GENERATOR == 1:
             return self.generators[0].train_g(discriminator, real_batch, adv_batch[0], all_labels)
@@ -355,19 +367,21 @@ class GeneratorNetGroup(torch.nn.Module):
         # check if outputs are the exact same
 
         if config.DIVERSITY_TYPE == "KL":
-            stacked_outputs = torch.stack(outputs)
-            batch_size = stacked_outputs.size(1)
-            softmax_outputs = torch.nn.functional.softmax(stacked_outputs, dim=2)
-            rescaled = (softmax_outputs + 1) / 2 + 1e-12
-            normalized = rescaled / rescaled.sum()
-           
-            norm_i = normalized.unsqueeze(2).expand(-1, -1, config.N_GENERATOR, -1)
-            norm_j = normalized.unsqueeze(1).expand(-1, config.N_GENERATOR, -1, -1)
+            stacked_outputs = torch.stack(outputs, dim=0)
+            flattened = stacked_outputs.view(config.N_GENERATOR, config.BATCH_SIZE, -1)
+            softmax_outputs = torch.nn.functional.softmax(flattened, dim=2)
+            log_softmax_outputs = torch.log(softmax_outputs + 1e-12)
 
-            kl_ij = torch.nn.functional.kl_div(norm_i.log(), norm_j, reduction='batchmean')
-            kl_ji = torch.nn.functional.kl_div(norm_j.log(), norm_i, reduction='batchmean')
+            kl_ij = (softmax_outputs.unsqueeze(0) * (log_softmax_outputs.unsqueeze(0) - log_softmax_outputs.unsqueeze(1))).sum(dim=3)
 
-            diversity_loss = kl_ij + kl_ji
+            kl_ji = (softmax_outputs.unsqueeze(1) * (log_softmax_outputs.unsqueeze(1) - log_softmax_outputs.unsqueeze(0))).sum(dim=3)
+
+            kl_matrix_ij = kl_ij.mean(dim=2)
+            kl_matrix_ji = kl_ji.mean(dim=2)
+
+            # print(f"KL_ij: {kl_ij}")
+
+            diversity_loss = (-1) * ( kl_matrix_ij + kl_matrix_ji)
 
         elif config.DIVERSITY_TYPE == "cosine":
             # Flatten all outputs for cosine similarity calculation
@@ -380,7 +394,7 @@ class GeneratorNetGroup(torch.nn.Module):
             cosine_similarity_matrix = torch.einsum('gbi,gbj->gij', normalized_outputs, normalized_outputs)  # Shape: [N_generators, N_generators, batch_size]
 
             # Compute diversity loss (1 - cosine similarity) averaged over the batch
-            diversity_loss = 1 - cosine_similarity_matrix.mean(dim=2)  # Shape: [N_generators, N_generators]
+            diversity_loss = cosine_similarity_matrix.mean(dim=2)  # Shape: [N_generators, N_generators]
 
         else:
             raise ValueError(f"Invalid diversity type: {config.DIVERSITY_TYPE}")
@@ -405,9 +419,11 @@ class GeneratorNetGroup(torch.nn.Module):
         
         # choose random generator to return
         # return max(errors).detach()
-        random_gen = torch.randint(0, len(self.generators), (1,))
+
+        # random_gen = torch.randint(0, len(self.generators), (1,))
+        chosen_gen = torch.argmin(torch.stack(errors))
         
-        return errors[random_gen].detach() + diversity_loss_curr, errors[random_gen].detach()
+        return errors[chosen_gen].detach() + diversity_loss_curr, errors[chosen_gen].detach()
 
 def noise(size, batch_size=config.BATCH_SIZE):
     '''
@@ -417,17 +433,19 @@ def noise(size, batch_size=config.BATCH_SIZE):
     return n
 
 def run():
-    # Initialize discriminator and generator(s)
-    discriminator = DiscriminatorNet()
-    generator = GeneratorNetGroup(config.N_GENERATOR)
-    mnist_classifier = Mnist_Classifier(28, 10)
 
     # Load data
-    train_data = mnist_data(train=True)# Create loader with data, so that we can iterate over it
+    train_data = cifar10_data(train=True)# Create loader with data, so that we can iterate over it
     train_data_loader = torch.utils.data.DataLoader(train_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
-    test_data = mnist_data(train=False)
+    test_data = cifar10_data(train=False)
     test_data_loader = torch.utils.data.DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
-    
+    config.Z_SHAPE = test_data[0][0].shape
+
+    # Initialize discriminator and generator(s)
+    discriminator = DiscriminatorNet(config.Z_SHAPE[0])
+    generator = GeneratorNetGroup(config.N_GENERATOR, config.Z_SHAPE[0])
+    # mnist_classifier = Mnist_Classifier(28, 10)
+
     # Num batches
     num_batches = len(train_data_loader)
 
@@ -441,6 +459,10 @@ def run():
 
             # noise_data = noise(config.Z_SHAPE, real_batch.size(0))
             adv_batch = [g + real_batch for g in generator(real_batch)]
+
+            # Ensure adversarial batch is not nan or inf
+            if any([torch.isnan(b).any() or torch.isinf(b).any() for b in adv_batch]):
+                raise ValueError("Adversarial batch contains nan or inf values")
 
             # discriminator winning
             if g_test_acc != None and g_test_acc > d_test_acc and config.TRAINING_ALTERNATE:
@@ -469,6 +491,8 @@ def run():
                         g_error, _ = generator.train_g(discriminator, real_batch, adv_batch, labels)
                         prev_d_fail = d_fail# Get discriminator error
                         adv_batch = [g + real_batch for g in generator(real_batch)]
+                        if any([torch.isnan(b).any() or torch.isinf(b).any() for b in adv_batch]):
+                            raise ValueError("Adversarial batch contains nan or inf values")
                         d_pred = discriminator(adv_batch[0])
                         d_fail = torch.sum(torch.argmax(d_pred, dim=1) == labels).float() / len(labels)
                         counter += 1
@@ -481,12 +505,12 @@ def run():
                     g_error, g_diversity = generator.train_g(discriminator, real_batch, adv_batch, labels)
 
             # train mnist classifier on side
-            mnist_error = mnist_classifier.train_s(real_batch, labels)
+            # mnist_error = mnist_classifier.train_s(real_batch, labels)
         
             # Log batch error
             logger.log(d_error, g_error, epoch, n_batch, num_batches)        
 
-            wandb.log({"Generator Error": g_error, "Discriminator Error": d_error, "Mnist Classifier Error": mnist_error})
+            wandb.log({"Generator Error": g_error, "Discriminator Error": d_error})
 
             # Display Progress every few batches
             if (n_batch) % config.BATCH_SIZE == 0:
@@ -504,6 +528,10 @@ def run():
 
                     # Sample some noise and generate test images from the current batch
                     test_images_noise = generator(test_batch)
+
+                    # ensure adv batch is not nan or inf
+                    if any([torch.isnan(b).any() or torch.isinf(b).any() for b in test_images_noise]):
+                        raise ValueError("Adversarial batch contains nan or inf values")
                     # print(test_images_noise[0], test_batch[0])
                     test_images = [g + test_batch for g in test_images_noise]
 
@@ -513,12 +541,18 @@ def run():
                     # Log Noise in wandb (default)
                     for i, img in enumerate(test_images_noise):
                         # normalize to 0-1
-                        img = (img - torch.min(img)) / (torch.max(img) - torch.min(img))
+                        if torch.max(img) != torch.min(img):
+                            img = (img - torch.min(img)) / (torch.max(img) - torch.min(img))
+                        else:
+                            img = img - torch.min(img)
                         logger.log_images("Generated Noise {}".format(i), img, 100, epoch, n_batch, num_batches)
 
                     # Log Generated Images in wandb
                     for i, img in enumerate(test_images):
-                        img = (img - torch.min(img)) / (torch.max(img) - torch.min(img))
+                        if torch.max(img) != torch.min(img):
+                            img = (img - torch.min(img)) / (torch.max(img) - torch.min(img))
+                        else:
+                            img = img - torch.min(img)
                         logger.log_images("Generated {}".format(i), img, 100, epoch, n_batch, num_batches)
 
                     # # Log Real Images in wandb
@@ -531,17 +565,19 @@ def run():
                     print("Disc Loss each type: ", loss_tup[0].item(), loss_tup[1].item())
 
                     wandb.log({"Gen Noise Max: ": torch.max(test_images_noise[0]), "Gen Noise Min: ": torch.min(test_images_noise[0])})
+                    
+
 
                     # Log discriminator error on perturbed and unperturbed data       
                     discriminator.eval()    
                     unperturbed = discriminator(Variable(images_to_vectors(test_batch)))
                     perturbed = [discriminator(Variable(images_to_vectors(p))) for p in test_images]
-                    mnist_classifications = mnist_classifier(Variable(images_to_vectors(test_images[0])))
+                    # mnist_classifications = mnist_classifier(Variable(images_to_vectors(test_images[0])))
 
                     # calculate accuracy
                     unperturbed_accuracy = torch.sum(torch.argmax(unperturbed, dim=1) == labels).float() / len(labels)
                     perturbed_accuracy = [torch.sum(torch.argmax(p, dim=1) == labels).float() / len(labels) for p in perturbed]
-                    mnist_performance = torch.sum(torch.argmax(mnist_classifications, dim=1) == labels).float() / len(labels)
+                    # mnist_performance = torch.sum(torch.argmax(mnist_classifications, dim=1) == labels).float() / len(labels)
 
                     g_test_acc = min(perturbed_accuracy)
                     d_test_acc = unperturbed_accuracy
@@ -554,26 +590,27 @@ def run():
                         wandb_log["Min Perturbed Accuracy"] = min(perturbed_accuracy)
                         wandb_log["Max Perturbed Accuracy"] = max(perturbed_accuracy)
 
-                    wandb_log["Mnist Classifier Accuracy"] = mnist_performance
+                    # wandb_log["Mnist Classifier Accuracy"] = mnist_performance
                         
                     wandb.log(wandb_log)
 
                 # Not in no-grad because need gradients to calculate adversarial examples
                 # Record fgsm error compared to perturbed data
                 # ensure attack isnt changing params
-                fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.3, test_batch, labels, CEloss)
+                fgsm_perturbed_pred, _ = comparison.apply_fgsm_attack(discriminator, 0.03, test_batch, labels, CEloss)
                 fgsm_perturbed_accuracy = torch.sum(torch.argmax(fgsm_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"FGSM Perturbed Accuracy": fgsm_perturbed_accuracy})
 
                 # Record pgd error compared to perturbed data
-                epsilon = 0.3
+                epsilon = 0.03
                 alpha = 0.005
                 n_iters = 100
                 pgd_perturbed_pred, _ = comparison.apply_pgd_attack(discriminator, epsilon, alpha, n_iters, test_batch, labels, CEloss)
                 pgd_perturbed_accuracy = torch.sum(torch.argmax(pgd_perturbed_pred, dim=1) == labels).float() / len(labels)
                 wandb.log({"PGD Perturbed Accuracy": pgd_perturbed_accuracy})
 
-
+                # print("FGSM Perturbed Accuracy: ", fgsm_perturbed_accuracy)
+                # print("PGD Perturbed Accuracy: ", pgd_perturbed_accuracy)
 
         d_losses.append(d_error)
         g_losses.append(g_error)
@@ -592,12 +629,12 @@ if __name__ == "__main__":
         project="DefendaGAN",
         config={
             "epochs": config.EPOCHS,
-            "dataset":"MNIST"
+            "dataset":"CIFAR10",
         }
     )
 
     # Initialize logger
-    logger = Logger(model_name='VGAN', data_name='MNIST')# Total number of epochs to train
+    logger = Logger(model_name='VGAN', data_name='CIFAR10')# Total number of epochs to train
 
     # Initialize Loss functions
     CEloss = nn.CrossEntropyLoss()

@@ -14,6 +14,14 @@ def mnist_data(train=True):
     out_dir = './dataset'
     return datasets.MNIST(root=out_dir, train=train, transform=compose, download=True)# Load data
 
+def cifar10_data(train=True):
+    compose = transforms.Compose(
+        [transforms.ToTensor(),
+         transforms.Normalize((.5, .5, .5), (.5, .5, .5))
+        ])
+    out_dir = './dataset'
+    return datasets.CIFAR10(root=out_dir, train=train, transform=compose, download=True)
+
 def noise(size):
     '''
     Generates a 1-d vector of gaussian sampled random values

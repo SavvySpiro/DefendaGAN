@@ -2,25 +2,25 @@
 import torch
 
 # Configurations for the GAN
-TRAINING_ALTERNATE = True # True or False, where it alternates if one of them is winning/losing
+TRAINING_ALTERNATE = False # True or False, where it alternates if one of them is winning/losing
 REGULARIZATION = True # True or False, where true means similar looking images, false means diverse looking images
-REG_STRENGTH = 1e-12 # Regularization strength
+REG_STRENGTH = 1e-6 # Regularization strength
 BATCH_SIZE = 128 # Batch sizes
 INPUT_TYPE = "noise" # "noise" or "image", where noise is random noise and image is the image as input to generator TODO
-N_GENERATOR = 1 # Number of generators
+N_GENERATOR = 5 # Number of generators
 GENERATOR_LR = 0.001 # Learning rate for the generators
 DISCRIMINATOR_LR = 0.001 # Learning rate for the discriminator
 Z_SHAPE = (1,28,28) # Don't change!
-KL_WEIGHT = 0.0001 # KL weight, the bigger the number the more diverse the generators are forced to be
+KL_WEIGHT = 0.1 # KL weight, the bigger the number the more diverse the generators are forced to be
 KL_WEIGHT_SCHEDULE = 1 # KL weight schedule. use 1 for no schedule #TODO: Implement schedule
-DIVERSITY_TYPE = "cosine" # "KL" or cosine where kl is the KL divergence and entropy is the entropy
+DIVERSITY_TYPE = "KL" # "KL" or cosine where kl is the KL divergence and entropy is the entropy
 VARY_REG = True # True or False, where true means the regularization strength varies by number of gens
 GEN_LOSS = "even" # even - true is 0, others equal probability
                 # target - true is 0, some other target is 1
                 # easiest - true is 0, some other target is 1, but the easiest one
                 # easiest_exp
-TRAIN_GEN_MAX = True # True or False, where true means the generator is trained many times on each run to catch up
-EPOCHS = 1
+TRAIN_GEN_MAX = False # True or False, where true means the generator is trained many times on each run to catch up
+EPOCHS = 20
 DISABLE_ATTACK = False # True or False, where true means the discriminator is disabled
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 '''
